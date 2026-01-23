@@ -1,2 +1,1 @@
-# ha-window-controller-gateway
-ha-window-controller-gateway
+慧尖开窗器网关Home Assistant集成
