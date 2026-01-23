@@ -23,7 +23,7 @@
 
 1. 确保已安装HACS
 2. 在HACS中添加自定义仓库：
-   - URL: `https://github.com/yourusername/ha-window-controller-gateway`
+   - URL: `https://github.com/fangwenyi-dev/ha-window-controller-gateway`
    - 类别: `Integration`
 3. 搜索并安装"慧尖开窗器网关"
 4. 重启Home Assistant
@@ -59,7 +59,7 @@
 
 ## 技术支持
 
-- 问题反馈：https://github.com/yourusername/ha-window-controller-gateway/issues
+- 问题反馈：https://github.com/fangwenyi-dev/ha-window-controller-gateway/issues
 - 协议文档：智能家居通讯协议.pdf
 
 ## 版本要求
