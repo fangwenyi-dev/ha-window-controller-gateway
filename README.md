@@ -1,18 +1,5 @@
 # 慧尖开窗器网关 Home Assistant 集成
 
-[![GitHub Release][releases-shield]][releases][![GitHub 发布][releases-shield][发布-盾牌][发布-盾牌]][releases发布][发布]
-[![GitHub ActivityGitHub 活动][commits-shield][提交-盾牌]][commits][提交][![GitHub 活动][commits-shield]][commits][![GitHub 活动GitHub 活动][commits-shield][提交-盾牌]][commits][提交][![GitHub 活动][commits-shield]][commits]
-[![License][license-shield]][license][![许可证][许可证盾牌]][许可证]
-
-[commits-shield提交 shield提交 shield]: https://img.shields.io/github/commit-activity/y/yourusername/ha-window-controller-gateway.svg[提交次数盾牌]: https://img.shields.io/github/commit-activity/y/yourusername/ha-window-controller-gateway.svg
-[commits提交]: https://github.com/yourusername/ha-window-controller-gateway/commits/main
-[license-shield许可证盾牌]: https://img.shields.io/github/license/yourusername/ha-window-controller-gateway.svg
-[license许可证]: https://github.com/yourusername/ha-window-controller-gateway/blob/main/LICENSE[许可证]: https://github.com/yourusername/ha-window-controller-gateway/blob/main/LICENSE
-[releases-shield发布 shield][发布 shield][发布 shield][发布 shield]: https://img.shields.io/github/release/yourusername/ha-window-controller-gateway.svg[发布 shield]: https://img.shields.io/github/release/yourusername/ha-window-controller-gateway.svg
-[releases]: https://github.com/yourusername/ha-window-controller-gateway/releases[发布]: https://github.com/yourusername/ha-window-controller-gateway/releases[发布]: https://github.com/yourusername/ha-window-controller-gateway/releases[发布]: https://github.com/yourusername/ha-window-controller-gateway/releases
-
-慧尖开窗器网关的Home Assistant集成。
-
 ## 功能特性
 
 - 网关在线状态监测
