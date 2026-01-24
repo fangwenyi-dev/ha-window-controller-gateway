@@ -1,6 +1,0 @@
-{
-  "name": "慧尖开窗器网关",
-  "render_readme": true,
-  "domains": ["cover", "binary_sensor", "button"],
-  "homeassistant": "2024.11.0"
-}
