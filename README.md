@@ -105,7 +105,7 @@ Home Assistant 自定义集成，用于控制慧尖开窗器网关及设备。
 - 支持网关在线状态监控
 - 支持开窗器设备控制
 - 支持电池电压和窗户状态传感器
-- 支持 MQTT 通信协议
+- 支持 MQTT 通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议......-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议......支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQTT通信协议-支持MQ......
 
 ## 开发者信息
 
@@ -131,7 +131,7 @@ Home Assistant 自定义集成，用于控制慧尖开窗器网关及设备。
 
 欢迎贡献代码、报告问题或提出建议！
 
-1. Fork 本仓库
+1. Fork 本仓库1.fork 本仓库1.复制本仓库1.复制本仓库1.复制本仓库1.复制本仓库1.复制本仓库1.复制本仓库1.复制本仓库1.复制本仓库1.复制本仓库1.复制本仓库1.复制本仓库
 2. 创建功能分支
 3. 提交更改
 4. 推送到分支
@@ -144,5 +144,5 @@ Home Assistant 自定义集成，用于控制慧尖开窗器网关及设备。
 ## 联系方式
 
 - 开发者：慧尖
-- 版本：1.0.2
+- 版本：1.0.3
 - 适配 Home Assistant 版本：2024.0.0 及以上
