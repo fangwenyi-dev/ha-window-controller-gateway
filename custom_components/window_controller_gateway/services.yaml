@@ -1,0 +1,68 @@
+# 开窗器网关服务定义
+
+start_pairing:
+  name: 开始配对
+  description: 启动网关的配对模式以添加新设备
+  fields:
+    device_id:
+      name: 设备ID
+      description: 网关设备的唯一标识符
+      required: true
+      example: "window_gateway_123456"
+      selector:
+        text:
+    duration:
+      name: 持续时间
+      description: 配对模式持续时间（秒）
+      default: 60
+      selector:
+        number:
+          min: 10
+          max: 300
+          step: 5
+          unit_of_measurement: 秒
+
+refresh_devices:
+  name: 刷新设备
+  description: 触发网关重新发现已配对的设备
+  fields:
+    device_id:
+      name: 设备ID
+      description: 网关设备的唯一标识符
+      required: true
+      example: "window_gateway_123456"
+      selector:
+        text:
+
+set_position:
+  name: 设置位置
+  description: 设置特定窗帘/窗户的位置
+  fields:
+    device_id:
+      name: 设备ID
+      description: 窗帘设备的唯一标识符
+      required: true
+      selector:
+        text:
+    position:
+      name: 位置
+      description: 目标位置（0-100）
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+check_gateway_status:
+  name: 检查网关状态
+  description: 检查网关的在线状态和连接情况
+  fields:
+    device_id:
+      name: 设备ID
+      description: 网关设备的唯一标识符
+      required: true
+      example: "window_gateway_123456"
+      selector:
+        text:
