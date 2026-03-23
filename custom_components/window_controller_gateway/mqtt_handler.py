@@ -4,6 +4,7 @@ import json
 import asyncio
 import random
 import weakref
+import time
 from datetime import datetime
 from typing import Dict, Any, Optional, Callable, Union
 
@@ -58,6 +59,10 @@ class WindowControllerMQTTHandler:
         
         # 状态更新回调 - 使用字典按设备SN组织回调
         self._status_callbacks = {}
+        
+        # 消息去重 - 记录最近处理的消息ID，避免重复处理
+        self._processed_messages = {}  # {message_id: timestamp}
+        self._message_dedup_duration = 5  # 5秒内相同ID的消息认为是重复
     
     def _schedule_async_task(self, coro):
         """安全地将异步任务调度到主事件循环
@@ -136,6 +141,24 @@ class WindowControllerMQTTHandler:
                     if not response_sn:
                         return
                     
+                    # 消息去重检查 - 使用 ctype + id + sn 作为唯一标识
+                    msg_key = f"{ctype}_{payload.get('id', 0)}_{response_sn}"
+                    current_time = time.time()
+                    
+                    # 清理过期的消息记录
+                    self._processed_messages = {
+                        k: v for k, v in self._processed_messages.items()
+                        if current_time - v < self._message_dedup_duration
+                    }
+                    
+                    # 如果消息已处理过，跳过
+                    if msg_key in self._processed_messages:
+                        _LOGGER.debug("跳过重复消息: %s", msg_key)
+                        return
+                    
+                    # 记录新消息
+                    self._processed_messages[msg_key] = current_time
+                    
                     # 如果是来自未配置网关的消息，触发网关发现
                     if response_sn != self.gateway_sn:
                         try:
@@ -206,7 +229,7 @@ class WindowControllerMQTTHandler:
                         self._schedule_async_task(
                             self.device_manager.add_device(device_sn, device_name, device_type)
                         )
-                    
+                        
                 elif response_type == "device_status":
                     device_sn = payload.get(ATTR_DEVICE_SN)
                     if not device_sn:
@@ -278,7 +301,6 @@ class WindowControllerMQTTHandler:
                     # 1. 基础指数退避
                     delay = base_delay * (2 ** (retry_count - 1))
                     # 2. 添加抖动（随机化）
-                    import random
                     jitter = random.uniform(min_jitter, max_jitter)
                     jittered_delay = delay * jitter
                     # 3. 确保延迟在合理范围内
@@ -381,38 +403,53 @@ class WindowControllerMQTTHandler:
                     _LOGGER.error("更新额外参数失败: %s", e)
                     return False
             
-            # 根据命令类型设置不同的data字段
-            if command == "bind_gateway":
-                payload["data"]["bind"] = 1  # 新增字段
-                payload["bind"] = 1
-            elif command == "start_pairing":
-                payload["data"]["bind"] = 1  # 新增字段
-                payload["bind"] = 1
-            elif command == "discover":
-                pass  # 不需要额外参数
-            elif command in ["open", "close", "stop", "a"]:
-                command_value_map = {
-                    "open": COMMAND_VALUE_OPEN,
-                    "close": COMMAND_VALUE_CLOSE,
-                    "stop": COMMAND_VALUE_STOP,
-                    "a": COMMAND_VALUE_TOGGLE
+            # 根据命令类型添加特定参数
+            if command == "start_pairing":
+                # 清空data并设置正确的配对参数
+                payload["data"] = {
+                    "bind": 1,  # 新增字段
+                    "devtype": DEVICE_TYPE_CURTAIN_CTR,
+                    "sn": PAIRING_SN_PLACEHOLDER
                 }
-                payload["data"]["value"] = command_value_map.get(command, 0)
-                payload["data"]["sn"] = device_sn  # 添加设备SN
+                # 在顶层也添加bind字段
+                payload["bind"] = 1
+            elif command in ["open", "close", "stop", "a"]:
+                # 控制命令需要包含子设备SN
+                payload["data"]["sn"] = device_sn
+                payload["data"]["attribute"] = ATTRIBUTE_W_TRAVEL
+                if command == "open":
+                    payload["data"]["value"] = COMMAND_VALUE_OPEN
+                elif command == "close":
+                    payload["data"]["value"] = COMMAND_VALUE_CLOSE
+                elif command == "stop":
+                    payload["data"]["value"] = COMMAND_VALUE_STOP
+                elif command == "a":
+                    payload["data"]["value"] = COMMAND_VALUE_TOGGLE
             elif command == "set_position":
-                if params and "position" in params:
-                    payload["data"]["value"] = params["position"]
-                    payload["data"]["sn"] = device_sn  # 添加设备SN
-                else:
-                    _LOGGER.error("set_position命令缺少position参数")
-                    return False
+                # 设置位置命令
+                payload["data"]["sn"] = device_sn
+                payload["data"]["attribute"] = ATTRIBUTE_W_TRAVEL
+                position = params.get("position", 0)
+                # 验证位置参数
+                try:
+                    position = int(position)
+                    if position < 0 or position > 100:
+                        _LOGGER.warning("位置参数超出范围(0-100)，使用默认值0: %s", position)
+                        position = 0
+                except (ValueError, TypeError):
+                    _LOGGER.warning("位置参数无效，使用默认值0: %s", position)
+                    position = 0
+                payload["data"]["value"] = str(position)
             
-            # 递增命令ID
+            # 打印详细的命令信息
+            _LOGGER.debug("发送命令到网关: %s, 命令: %s, 设备SN: %s, 载荷: %s", 
+                          self.TOPIC_GATEWAY_REQ, command, device_sn, payload)
+            
+            # 递增ID，保持在合理范围内
             self.command_id += 1
             if self.command_id > MAX_COMMAND_ID:
                 self.command_id = 1
             
-            # 发送MQTT消息
             try:
                 await mqtt.async_publish(
                     self.hass,
@@ -421,293 +458,15 @@ class WindowControllerMQTTHandler:
                     1,
                     False
                 )
-                _LOGGER.info("命令 %s 已发送到设备 %s", command, device_sn)
-                _LOGGER.debug("命令payload: %s", payload)
+                _LOGGER.info("发送协议命令 %s (类型: %s) 到设备 %s, 参数: %s", command, ctype, device_sn, payload["data"])
                 return True
             except Exception as e:
                 _LOGGER.error("发送MQTT消息失败: %s", e)
                 return False
-                
+        
         except Exception as e:
             _LOGGER.error("发送命令时出错: %s", e)
             return False
-    
-    def _notify_status_change(self):
-        """通知所有注册的状态变更回调"""
-        for device_sn, callbacks in self._status_callbacks.items():
-            for callback in callbacks:
-                try:
-                    callback()
-                except Exception as e:
-                    _LOGGER.error("执行状态变更回调失败: %s", e)
-    
-    def register_status_callback(self, device_sn: str, callback: Callable):
-        """注册设备状态变更回调
-        
-        Args:
-            device_sn: 设备SN
-            callback: 回调函数
-        """
-        if device_sn not in self._status_callbacks:
-            self._status_callbacks[device_sn] = []
-        self._status_callbacks[device_sn].append(callback)
-    
-    def unregister_status_callback(self, device_sn: str, callback: Callable):
-        """注销设备状态变更回调
-        
-        Args:
-            device_sn: 设备SN
-            callback: 回调函数
-        """
-        if device_sn in self._status_callbacks:
-            try:
-                self._status_callbacks[device_sn].remove(callback)
-            except ValueError:
-                pass
-    
-    async def _handle_ctype_001(self, payload, ctype, data):
-        """处理协议类型001：绑定网关响应"""
-        _LOGGER.debug("处理001绑定网关响应: %s", payload)
-        
-        bind_status = data.get("bind")
-        if bind_status == 1:
-            _LOGGER.info("网关绑定成功")
-            # 更新网关状态
-            self._schedule_async_task(
-                self.device_manager.update_gateway_status("online")
-            )
-        else:
-            _LOGGER.warning("网关绑定失败")
-    
-    async def _handle_ctype_002(self, payload, ctype, data):
-        """处理协议类型002：网关状态上报/设备发现"""
-        _LOGGER.debug("处理002网关状态上报: %s", payload)
-        
-        # 检查是否是设备列表上报
-        devices = data.get("devices", [])
-        if devices:
-            _LOGGER.info("收到设备列表上报，共%d个设备", len(devices))
-            for device_info in devices:
-                device_sn = device_info.get("sn")
-                if not device_sn:
-                    continue
-                    
-                # 提取设备信息
-                devtype = device_info.get("devtype", DEVICE_TYPE_WINDOW_OPENER)
-                device_name = device_info.get("name", f"设备 {device_sn[-6:]}")
-                
-                # 解析设备状态
-                status = device_info.get("status", "unknown")
-                attributes = {}
-                
-                # 提取位置信息
-                if "pos" in device_info:
-                    attributes[ATTR_POSITION] = device_info["pos"]
-                
-                # 提取电池电量
-                if "bat" in device_info:
-                    attributes[ATTR_BATTERY] = device_info["bat"]
-                
-                # 提取行程信息
-                if "w_travel" in device_info:
-                    attributes[ATTRIBUTE_W_TRAVEL] = device_info["w_travel"]
-                
-                # 添加或更新设备
-                self._schedule_async_task(
-                    self.device_manager.add_device(device_sn, device_name, devtype)
-                )
-                self._schedule_async_task(
-                    self.device_manager.update_device_status(device_sn, status, attributes)
-                )
-        
-        # 更新网关在线状态
-        if self.connected:
-            # 更新最后收到上报的时间
-            self.last_gateway_report_time = datetime.now()
-    
-    async def _handle_ctype_003(self, payload, ctype, data):
-        """处理协议类型003：绑定子设备"""
-        _LOGGER.debug("处理003绑定子设备: %s", payload)
-        
-        bind_status = data.get("bind")
-        device_sn = data.get("sn")
-        
-        if bind_status == 1:
-            _LOGGER.info("子设备绑定成功: %s", device_sn)
-            # 触发一次设备发现以更新设备列表
-            await self.trigger_discovery()
-        else:
-            _LOGGER.info("子设备解绑成功: %s", device_sn)
-            # 从设备管理器中移除设备
-            if device_sn:
-                self._schedule_async_task(
-                    self.device_manager.remove_device(device_sn)
-                )
-    
-    async def _handle_ctype_004(self, payload, ctype, data):
-        """处理协议类型004：设备控制响应"""
-        _LOGGER.debug("处理004设备控制响应: %s", payload)
-        
-        device_sn = data.get("sn")
-        if not device_sn:
-            return
-        
-        # 解析设备状态
-        status = data.get("status", "unknown")
-        attributes = {}
-        
-        # 提取位置信息
-        if "pos" in data:
-            attributes[ATTR_POSITION] = data["pos"]
-        
-        # 提取电池电量
-        if "bat" in data:
-            attributes[ATTR_BATTERY] = data["bat"]
-        
-        # 提取行程信息
-        if "w_travel" in data:
-            attributes[ATTRIBUTE_W_TRAVEL] = data["w_travel"]
-        
-        # 更新设备状态
-        self._schedule_async_task(
-            self.device_manager.update_device_status(device_sn, status, attributes)
-        )
-    
-    async def _handle_ctype_005(self, payload, ctype, data):
-        """处理协议类型005：设备状态查询响应"""
-        _LOGGER.debug("处理005设备状态查询响应: %s", payload)
-        
-        device_sn = data.get("sn")
-        if not device_sn:
-            return
-        
-        # 解析设备状态
-        status = data.get("status", "unknown")
-        attributes = {}
-        
-        # 提取位置信息
-        if "pos" in data:
-            attributes[ATTR_POSITION] = data["pos"]
-        
-        # 提取电池电量
-        if "bat" in data:
-            attributes[ATTR_BATTERY] = data["bat"]
-        
-        # 提取行程信息
-        if "w_travel" in data:
-            attributes[ATTRIBUTE_W_TRAVEL] = data["w_travel"]
-        
-        # 更新设备状态
-        self._schedule_async_task(
-            self.device_manager.update_device_status(device_sn, status, attributes)
-        )
-    
-    async def _handle_ctype_006(self, payload, ctype, data):
-        """处理协议类型006：设备详细信息"""
-        _LOGGER.debug("处理006设备详细信息: %s", payload)
-        
-        device_sn = data.get("sn")
-        if not device_sn:
-            return
-        
-        # 解析设备详细信息
-        attributes = {}
-        
-        # 提取电池电量
-        if "bat" in data:
-            attributes[ATTR_BATTERY] = data["bat"]
-        
-        # 提取行程信息
-        if "w_travel" in data:
-            attributes[ATTRIBUTE_W_TRAVEL] = data["w_travel"]
-        
-        # 提取其他信息...
-        
-        # 更新设备信息
-        self._schedule_async_task(
-            self.device_manager.update_device_attributes(device_sn, attributes)
-        )
-    
-    async def _handle_ctype_007(self, payload, ctype, data):
-        """处理协议类型007：网关配置响应"""
-        _LOGGER.debug("处理007网关配置响应: %s", payload)
-        
-        # 处理网关配置响应...
-        pass
-    
-    async def _handle_ctype_008(self, payload, ctype, data):
-        """处理协议类型008：网关升级响应"""
-        _LOGGER.debug("处理008网关升级响应: %s", payload)
-        
-        # 处理网关升级响应...
-        pass
-    
-    async def _handle_ctype_009(self, payload, ctype, data):
-        """处理协议类型009：网关时间同步响应"""
-        _LOGGER.debug("处理009网关时间同步响应: %s", payload)
-        
-        # 处理时间同步响应...
-        pass
-    
-    async def _handle_ctype_010(self, payload, ctype, data):
-        """处理协议类型010：网关恢复出厂设置响应"""
-        _LOGGER.debug("处理010网关恢复出厂设置响应: %s", payload)
-        
-        # 处理恢复出厂设置响应...
-        pass
-    
-    async def start_pairing(self, duration: int = 60):
-        """开始配对模式
-        
-        Args:
-            duration: 配对持续时间（秒），默认60秒
-        """
-        if self.pairing_active:
-            _LOGGER.warning("配对模式已在进行中")
-            return
-        
-        self.pairing_active = True
-        
-        # 发送配对命令
-        payload = {
-            "head": PROTOCOL_HEAD,
-            "ctype": "003",
-            "id": self.command_id,
-            "data": {
-                "bind": 1,
-                "devtype": DEVICE_TYPE_CURTAIN_CTR,
-                "sn": PAIRING_SN_PLACEHOLDER
-            },
-            "sn": self.gateway_sn,
-            "bind": 1
-        }
-        
-        # 递增ID
-        self.command_id += 1
-        if self.command_id > MAX_COMMAND_ID:
-            self.command_id = 1
-        
-        # 发送MQTT消息
-        try:
-            await mqtt.async_publish(
-                self.hass,
-                self.TOPIC_GATEWAY_REQ,
-                json.dumps(payload),
-                1,
-                False
-            )
-            _LOGGER.info("配对命令已发送，持续时间: %d秒", duration)
-        except Exception as e:
-            _LOGGER.error("发送配对命令失败: %s", e)
-            self.pairing_active = False
-            raise
-        
-        # 设置配对超时
-        async def pairing_timeout():
-            self.pairing_active = False
-            _LOGGER.info("配对模式已结束")
-        
-        self.hass.loop.call_later(duration, lambda: self._schedule_async_task(pairing_timeout()))
     
     async def unbind_device(self, device_sn: str):
         """解绑设备 - 使用协议类型003，bind=0"""
@@ -716,16 +475,15 @@ class WindowControllerMQTTHandler:
             "ctype": "003",
             "id": self.command_id,
             "data": {
-                "bind": 0,
+                "bind": 0,  # 解绑
                 "devtype": DEVICE_TYPE_CURTAIN_CTR,
                 "sn": device_sn
             },
             "sn": self.gateway_sn,
             "bind": 0  # 0代表解绑
         }
-        self.command_id += 1
-        if self.command_id > MAX_COMMAND_ID:
-            self.command_id = 1
+        
+        _LOGGER.info("解绑设备: %s", device_sn)
         
         try:
             await mqtt.async_publish(
@@ -735,81 +493,22 @@ class WindowControllerMQTTHandler:
                 1,
                 False
             )
-            _LOGGER.info("解绑命令已发送，设备SN: %s", device_sn)
-            _LOGGER.debug("解绑命令payload: %s", payload)
+            _LOGGER.info("解绑命令已发送: %s", device_sn)
+            return True
         except Exception as e:
             _LOGGER.error("发送解绑命令失败: %s", e)
-            raise
+            return False
     
-    async def trigger_discovery(self):
-        """触发设备发现 - 使用协议类型002"""
-        await self.send_command(
-            self.gateway_sn,
-            "discover"
-        )
-        _LOGGER.info("设备发现命令已发送")
-    
-    async def fast_discovery(self):
-        """快速设备发现 - 优化版，添加设备状态预查询逻辑"""
-        import asyncio
-        import time
-        start_time = time.time()
-        
-        _LOGGER.info("开始快速设备发现...")
-        
-        # 发送设备发现命令
-        await self.send_command(
-            self.gateway_sn,
-            "discover"
-        )
-        
-        # 等待设备列表上报
-        await asyncio.sleep(2)
-        
-        # 获取已发现的设备列表
-        devices = self.device_manager.get_all_devices()
-        
-        if devices:
-            _LOGGER.info("发现 %d 个设备，开始查询状态...", len(devices))
-            
-            # 批量查询设备状态
-            batch_size = MQTT_BATCH_SIZE
-            for i in range(0, len(devices), batch_size):
-                batch = list(devices.values())[i:i+batch_size]
-                
-                # 并发查询设备状态，但限制并发数
-                tasks = []
-                for device in batch:
-                    task = self.send_command(device.device_sn, "status")
-                    tasks.append(task)
-                
-                if tasks:
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                
-                # 批次间隔，避免MQTT过载
-                if i + batch_size < len(devices):
-                    await asyncio.sleep(0.5)
-        
-        elapsed_time = time.time() - start_time
-        _LOGGER.info("快速设备发现完成，耗时 %.2f 秒", elapsed_time)
-    
-    async def async_request_gateway_status(self):
-        """请求网关状态"""
+    async def unbind_device_legacy(self, device_sn: str):
+        """解绑设备（兼容旧格式）"""
         payload = {
-            "head": PROTOCOL_HEAD,
-            "ctype": "002",
-            "id": self.command_id,
-            "data": {
-            },
-            "sn": self.gateway_sn
+            "type": "unbind_device",
+            "gateway_sn": self.gateway_sn,
+            "device_sn": device_sn
         }
         
-        # 递增ID
-        self.command_id += 1
-        if self.command_id > MAX_COMMAND_ID:
-            self.command_id = 1
+        _LOGGER.info("解绑设备(旧格式): %s", device_sn)
         
-        # 发送MQTT消息
         try:
             await mqtt.async_publish(
                 self.hass,
@@ -818,34 +517,217 @@ class WindowControllerMQTTHandler:
                 1,
                 False
             )
-            _LOGGER.debug("网关状态请求已发送")
+            return True
         except Exception as e:
-            _LOGGER.error("发送网关状态请求失败: %s", e)
+            _LOGGER.error("发送解绑命令失败: %s", e)
+            return False
     
-    async def async_set_device_position(self, device_sn: str, position: int):
-        """设置设备位置
-        
-        Args:
-            device_sn: 设备SN
-            position: 位置值 (0-100)
-        """
-        await self.send_command(
-            device_sn,
-            "set_position",
-            {"position": position}
-        )
+    def _notify_status_change(self):
+        """通知状态变化，触发所有注册的回调"""
+        for device_sn, callbacks in self._status_callbacks.items():
+            for callback in callbacks:
+                try:
+                    callback()
+                except Exception as e:
+                    _LOGGER.error("执行状态回调失败: %s", e)
     
-    async def cleanup(self):
-        """清理资源"""
-        # 取消后台任务
-        if self._check_task:
-            self._check_task.cancel()
+    def _notify_device_status_change(self, device_sn):
+        """通知特定设备状态变化"""
+        if device_sn in self._status_callbacks:
+            for callback in self._status_callbacks[device_sn]:
+                try:
+                    callback()
+                except Exception as e:
+                    _LOGGER.error("执行设备状态回调失败: %s", e)
+    
+    def register_status_callback(self, device_sn: str, callback: Callable):
+        """注册设备状态变化回调"""
+        if device_sn not in self._status_callbacks:
+            self._status_callbacks[device_sn] = []
+        self._status_callbacks[device_sn].append(callback)
+    
+    def unregister_status_callback(self, device_sn: str, callback: Callable):
+        """注销设备状态变化回调"""
+        if device_sn in self._status_callbacks:
             try:
-                await self._check_task
-            except asyncio.CancelledError:
+                self._status_callbacks[device_sn].remove(callback)
+            except ValueError:
                 pass
+    
+    async def _handle_ctype_001(self, payload, ctype, data):
+        """处理协议类型001：绑定网关响应"""
+        errcode = data.get("errcode", -1)
+        if errcode == 0:
+            _LOGGER.info("网关绑定成功")
+        else:
+            _LOGGER.warning("网关绑定失败，错误码: %d", errcode)
+    
+    async def _handle_ctype_002(self, payload, ctype, data):
+        """处理协议类型002：设备发现/状态上报"""
+        devices = data.get("devices", [])
         
-        # 清理回调
-        self._status_callbacks.clear()
+        for device_info in devices:
+            device_sn = device_info.get("sn")
+            if not device_sn:
+                continue
+            
+            # 获取设备类型
+            devtype = device_info.get("devtype", 0)
+            
+            # 根据设备类型确定设备名称
+            if devtype == 20482:
+                device_name = f"窗户 {device_sn[-4:]}"
+            elif devtype == 20485:
+                device_name = f"传感器 {device_sn[-4:]}"
+            else:
+                device_name = f"设备 {device_sn[-4:]}"
+            
+            # 提取设备属性
+            attributes = {}
+            
+            # 电池电压
+            if "battery" in device_info:
+                battery = device_info["battery"]
+                voltage = float(battery) / 10
+                attributes["voltage"] = voltage
+            
+            # 窗户行程（用于判断开关状态）
+            if "r_travel" in device_info:
+                r_travel = device_info["r_travel"]
+                attributes["r_travel"] = r_travel
+            
+            # 最后通信时间
+            if "last" in device_info:
+                attributes["last_seen"] = device_info["last"]
+            
+            # 版本号
+            if "version" in device_info:
+                attributes["version"] = device_info["version"]
+            
+            # roll值（可能是位置）
+            if "roll" in device_info:
+                attributes["roll"] = device_info["roll"]
+            
+            # 根据 r_travel 确定状态
+            r_travel = device_info.get("r_travel", 0)
+            if r_travel == 0:
+                status = "closed"
+            else:
+                status = "open"
+            
+            _LOGGER.debug("处理设备状态: %s, 名称: %s, 状态: %s, 类型: %d", 
+                         device_sn, device_name, status, devtype)
+            
+            # 更新设备状态
+            await self.device_manager.update_device_status(device_sn, status, attributes)
+    
+    async def _handle_ctype_003(self, payload, ctype, data):
+        """处理协议类型003：绑定子设备响应"""
+        errcode = data.get("errcode", -1)
+        device_sn = data.get("sn")
         
-        _LOGGER.info("MQTT处理器已清理")
+        if errcode == 0:
+            if device_sn:
+                _LOGGER.info("设备绑定成功: %s", device_sn)
+        else:
+            # 错误码7可能表示通讯距离不够，不记录为错误
+            if errcode == 7:
+                _LOGGER.debug("设备绑定失败，错误码: %d, SN: %s (可能是通讯距离不够)", errcode, device_sn)
+            else:
+                # 其他错误码记录为警告
+                _LOGGER.warning("设备绑定失败，错误码: %d, SN: %s", errcode, device_sn)       
+
+    async def _handle_ctype_004(self, payload, ctype, data):
+        """处理协议类型004：设备控制响应"""    
+        errcode = data.get("errcode", -1)      
+        device_sn = data.get("sn")
+        if errcode == 0:
+            if device_sn:
+                _LOGGER.debug("设备控制成功: %s", device_sn)
+            else:
+                _LOGGER.debug("设备控制成功，但未返回设备SN")
+        else:
+            # 错误码7可能表示通讯距离不够，不记录为错误
+            if errcode == 7:
+                _LOGGER.debug("设备控制失败，错误码: %d, SN: %s (可能是通讯距离不够)", errcode, device_sn)
+            else:
+                # 其他错误码记录为警告
+                _LOGGER.warning("设备控制失败，错误码: %d, SN: %s", errcode, device_sn)       
+            # 尝试重新发送命令，可能是临时错误 
+            if device_sn:
+                _LOGGER.debug("尝试重新发送命令到设备: %s", device_sn)
+
+    async def _handle_ctype_005(self, payload, ctype, data):
+        """处理协议类型005：设备上报"""        
+        device_sn = data.get("sn")
+        if device_sn:
+            # 解析设备上报的状态
+            status = data.get("status", "unknown")
+            attributes = {}
+
+            # 提取上报的属性
+            if "position" in data:
+                attributes[ATTR_POSITION] = data["position"]
+            if "battery" in data:
+                # 统一存储为 voltage，与网关上 报保持一致
+                battery = data["battery"]      
+                # 转换为浮点数并除以10（如105 → 10.5V）
+                voltage = float(battery) / 10  
+                attributes["voltage"] = voltage
+                _LOGGER.debug("设备 %s 电池电压: %.1fV", device_sn, voltage)
+            if "state" in data:
+                attributes["state"] = data["state"]
+
+            # 处理attrs数组
+            if "attrs" in data:
+                attrs = data["attrs"]
+                for attr in attrs:
+                    attribute = attr.get("attribute")
+                    value = attr.get("value")  
+
+                    if attribute == "voltage": 
+                        # 转换电压值，105表示10.5v
+                        voltage = float(value) / 10
+                        attributes["voltage"] = voltage
+                    elif attribute == "r_travel":
+                        # 处理窗户状态，0表示关闭，其他表示打开
+                        travel_value = int(value)
+                        attributes["r_travel"] = travel_value
+                        # 根据r_travel设置状态 
+                        if travel_value == 0:  
+                            status = "closed"  
+                        else:
+                            status = "open"    
+
+            # 更新设备状态
+            await self.device_manager.update_device_status(device_sn, status, attributes)     
+            # 通知设备状态变化，触发传感器实体 更新
+            self._notify_device_status_change(device_sn)
+            _LOGGER.debug("设备上报处理完成: %s", device_sn)
+
+    async def _handle_ctype_006(self, payload, ctype, data):
+        """处理协议类型006：批量设备状态上报"""
+        # 这里可以添加批量设备状态上报的处理逻 辑
+        _LOGGER.debug("批量设备状态上报: %s", data)
+
+    async def _handle_ctype_007(self, payload, ctype, data):
+        """处理协议类型007：设备事件上报"""    
+        # 这里可以添加设备事件上报的处理逻辑   
+        _LOGGER.debug("设备事件上报: %s", data)
+
+    async def _handle_ctype_008(self, payload, ctype, data):
+        """处理协议类型008：网关配置更新"""    
+        # 这里可以添加网关配置更新的处理逻辑   
+        _LOGGER.debug("网关配置更新: %s", data)
+
+    async def _handle_ctype_009(self, payload, ctype, data):
+        """处理协议类型009：设备配置更新"""    
+        # 这里可以添加设备配置更新的处理逻辑   
+        _LOGGER.debug("设备配置更新: %s", data)
+
+    async def _handle_ctype_010(self, payload, ctype, data):
+        """处理协议类型010：系统消息"""        
+        # 这里可以添加系统消息的处理逻辑       
+        _LOGGER.debug("系统消息: %s", data)    
+        # MQTT订阅会在HA重启时自动清理，无需手 动处理
+        return True
