@@ -185,6 +185,7 @@ Home Assistant 自定义集成，用于控制慧尖开窗器网关及设备。
 ## 版本历史
 
 ### v1.3.0
+- 新增：支持 Cover 实体，LLM 语音控制可直接使用 open_cover/close_cover/stop_cover 控制开窗器
 - 优化：精简代码，移除 DeviceCacheManager 类（约 280 行）
 - 优化：移除 GatewayReplaceButton 类（约 90 行）
 - 优化：移除 WindowControllerCover 类（约 200 行）
