@@ -235,28 +235,30 @@ async def async_setup_entry(
         sensors_to_track = {}
         
         # 检查并创建电池电压传感器
-        battery_sensor = WindowControllerBatterySensor(
-            hass,
-            device_manager,
-            gateway_sn,
-            device_sn,
-            device_name
-        )
-        entities_to_add.append(battery_sensor)
-        sensors_to_track["battery"] = battery_sensor
-        _LOGGER.debug("为设备 %s 添加电池传感器", device_name)
+        if not battery_exists:
+            battery_sensor = WindowControllerBatterySensor(
+                hass,
+                device_manager,
+                gateway_sn,
+                device_sn,
+                device_name
+            )
+            entities_to_add.append(battery_sensor)
+            sensors_to_track["battery"] = battery_sensor
+            _LOGGER.debug("为设备 %s 添加电池传感器", device_name)
         
         # 检查并创建状态传感器
-        status_sensor = WindowControllerStatusSensor(
-            hass,
-            device_manager,
-            gateway_sn,
-            device_sn,
-            device_name
-        )
-        entities_to_add.append(status_sensor)
-        sensors_to_track["status"] = status_sensor
-        _LOGGER.debug("为设备 %s 添加状态传感器", device_name)
+        if not status_exists:
+            status_sensor = WindowControllerStatusSensor(
+                hass,
+                device_manager,
+                gateway_sn,
+                device_sn,
+                device_name
+            )
+            entities_to_add.append(status_sensor)
+            sensors_to_track["status"] = status_sensor
+            _LOGGER.debug("为设备 %s 添加状态传感器", device_name)
         
         # 调用async_add_entities添加实体
         if entities_to_add:

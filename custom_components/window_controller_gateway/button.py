@@ -1,14 +1,12 @@
 """开窗器网关按钮平台"""
 import logging
-from typing import Optional
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.components.button import ButtonEntity
-from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 
-from .gateway import GatewayPairingButton, GatewayDeviceRemoveButton, GatewayReplaceButton
+from .gateway import GatewayPairingButton, GatewayDeviceRemoveButton
 from .base_entity import WindowControllerBaseEntity
 from .const import (
     DOMAIN,
@@ -21,10 +19,7 @@ from .const import (
     COMMAND_OPEN,
     COMMAND_CLOSE,
     COMMAND_STOP,
-    ENTITY_GATEWAY_PREFIX,
-    DEVICE_TO_GATEWAY_MAPPING
 )
-from .utils import get_device_gateway_mapping
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,32 +28,8 @@ from .utils import get_entity_registry
 
 
 def _get_entity_registry(hass):
-    """获取实体注册表（带缓存）
-    
-    Args:
-        hass: Home Assistant实例
-    
-    Returns:
-        EntityRegistry: 实体注册表
-    """
+    """获取实体注册表（带缓存）"""
     return get_entity_registry(hass)
-
-
-def _check_entity_exists(hass, platform, domain, unique_id):
-    """检查实体是否已存在
-    
-    Args:
-        hass: Home Assistant实例
-        platform: 平台类型（如"button"）
-        domain: 域名
-        unique_id: 实体唯一ID
-    
-    Returns:
-        bool: 实体是否存在
-    """
-    entity_registry = _get_entity_registry(hass)
-    entity_id = entity_registry.async_get_entity_id(platform, domain, unique_id)
-    return entity_id is not None
 
 
 def _create_device_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, entry_id):
@@ -182,113 +153,6 @@ class BaseWindowControllerButton(WindowControllerBaseEntity, ButtonEntity):
             _LOGGER.error("触发设备%s命令失败: %s", self._attr_name, e)
 
 
-class WindowControllerAButton(BaseWindowControllerButton):
-    """开窗器A按钮实体"""
-    
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        device_manager,
-        mqtt_handler,
-        gateway_sn: str,
-        device_sn: str,
-        device_name: str
-    ):
-        """初始化开窗器A按钮"""
-        super().__init__(
-            hass,
-            device_manager,
-            mqtt_handler,
-            gateway_sn,
-            device_sn,
-            device_name,
-            "A",
-            "a",
-            COMMAND_A,
-            "mdi:alpha-a"
-        )
-
-
-class WindowControllerOpenButton(BaseWindowControllerButton):
-    """开窗器打开按钮实体"""
-    
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        device_manager,
-        mqtt_handler,
-        gateway_sn: str,
-        device_sn: str,
-        device_name: str
-    ):
-        """初始化开窗器打开按钮"""
-        super().__init__(
-            hass,
-            device_manager,
-            mqtt_handler,
-            gateway_sn,
-            device_sn,
-            device_name,
-            "开启",
-            "open",
-            COMMAND_OPEN,
-            "mdi:window-open"
-        )
-
-
-class WindowControllerCloseButton(BaseWindowControllerButton):
-    """开窗器关闭按钮实体"""
-    
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        device_manager,
-        mqtt_handler,
-        gateway_sn: str,
-        device_sn: str,
-        device_name: str
-    ):
-        """初始化开窗器关闭按钮"""
-        super().__init__(
-            hass,
-            device_manager,
-            mqtt_handler,
-            gateway_sn,
-            device_sn,
-            device_name,
-            "关闭",
-            "close",
-            COMMAND_CLOSE,
-            "mdi:window-closed"
-        )
-
-
-class WindowControllerStopButton(BaseWindowControllerButton):
-    """开窗器停止按钮实体"""
-    
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        device_manager,
-        mqtt_handler,
-        gateway_sn: str,
-        device_sn: str,
-        device_name: str
-    ):
-        """初始化开窗器停止按钮"""
-        super().__init__(
-            hass,
-            device_manager,
-            mqtt_handler,
-            gateway_sn,
-            device_sn,
-            device_name,
-            "暂停",
-            "stop",
-            COMMAND_STOP,
-            "mdi:pause"
-        )
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -381,26 +245,26 @@ async def async_setup_entry(
     async def on_device_added(device_sn: str, device_name: str, device_type: str):
         """设备添加回调，自动创建按钮"""
         if device_type == DEVICE_TYPE_WINDOW_OPENER:
-            # 存储要添加的实体
+            entity_registry = _get_entity_registry(hass)
             entities_to_add = []
             
-            # 直接添加删除按钮，不检查实体是否存在
-            # HA 会自动处理重复实体，确保按钮始终可用
-            remove_button = GatewayDeviceRemoveButton(
-                hass,
-                device_manager,
-                mqtt_handler,
-                gateway_sn,
-                gateway_name,
-                device_sn,
-                device_name,
-                str(entry.entry_id)
-            )
-            entities_to_add.append(remove_button)
-            created_remove_buttons[device_sn] = remove_button
-            # 更新entry_data中的删除按钮跟踪信息
-            entry_data["created_remove_buttons"] = created_remove_buttons
-            _LOGGER.debug("为设备 %s 添加删除按钮", device_name)
+            # 检查删除按钮是否已存在
+            remove_unique_id = f"{gateway_sn}_remove_{device_sn}"
+            if not entity_registry.async_get_entity_id("button", DOMAIN, remove_unique_id):
+                remove_button = GatewayDeviceRemoveButton(
+                    hass,
+                    device_manager,
+                    mqtt_handler,
+                    gateway_sn,
+                    gateway_name,
+                    device_sn,
+                    device_name,
+                    str(entry.entry_id)
+                )
+                entities_to_add.append(remove_button)
+                created_remove_buttons[device_sn] = remove_button
+                entry_data["created_remove_buttons"] = created_remove_buttons
+                _LOGGER.debug("为设备 %s 添加删除按钮", device_name)
             
             # 为设备创建所有按钮
             device_buttons = _create_device_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, str(entry.entry_id))
@@ -437,7 +301,7 @@ async def async_setup_entry(
                     # 生成并删除其他按钮实体ID
                     button_types = ["open", "stop", "close", "a"]
                     for button_type in button_types:
-                        button_unique_id = f"{device_sn}_{button_type}"
+                        button_unique_id = f"{gateway_sn}_{device_sn}_{button_type}"
                         # 查找并删除实体
                         entity_entry = entity_registry.async_get_entity_id("button", DOMAIN, button_unique_id)
                         if entity_entry:
@@ -458,13 +322,3 @@ async def async_setup_entry(
     
     # 存储删除按钮跟踪信息到entry_data，以便在卸载时清理
     entry_data["created_remove_buttons"] = created_remove_buttons
-
-async def async_setup_platform(
-    hass: HomeAssistant,
-    config: dict,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: Optional[dict] = None
-) -> None:
-    """设置发现平台"""
-    # 使用标准发现流程，不需要在此处理
-    pass

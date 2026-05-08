@@ -1,24 +1,20 @@
 """开窗器网关实体"""
 import logging
 import asyncio
-from typing import Optional
 
 from homeassistant.core import HomeAssistant
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorDeviceClass
 )
 from homeassistant.components.button import ButtonEntity
 from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     DOMAIN,
     CONF_GATEWAY_SN,
     CONF_GATEWAY_NAME,
     DEFAULT_GATEWAY_NAME,
-    ENTITY_GATEWAY_PREFIX,
     ENTITY_ONLINE_SENSOR_SUFFIX,
     ENTITY_PAIRING_BUTTON_SUFFIX,
     MANUFACTURER,
@@ -311,93 +307,3 @@ class GatewayDeviceRemoveButton(ButtonEntity):
                         _LOGGER.debug("注册表中相关的按钮实体: %s", related_entities)
         except Exception as e:
             _LOGGER.error("触发设备解绑模式失败: %s", e)
-
-class GatewayReplaceButton(ButtonEntity):
-    """网关替换按键"""
-    
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        device_manager,
-        mqtt_handler,
-        gateway_sn: str,
-        gateway_name: str,
-        entry_id: str = None
-    ):
-        """初始化网关替换按键"""
-        self.hass = hass
-        self.device_manager = device_manager
-        self.mqtt_handler = mqtt_handler
-        self.gateway_sn = gateway_sn
-        self.gateway_name = gateway_name
-        self.entry_id = entry_id
-        self._attr_name = f"{gateway_name} 替换旧网关"
-        # unique_id基于网关SN，确保同一网关只有一个替换按钮
-        self._attr_unique_id = f"{gateway_sn}_replace"
-        # 添加图标
-        self._attr_icon = "mdi:gateway-transfer"
-        # 添加设备ID属性，用于服务调用
-        self.device_id = gateway_sn
-        # 添加防重复点击标志
-        self._is_processing = False
-    
-    @property
-    def device_info(self) -> DeviceInfo:
-        """返回设备信息 - 与网关关联"""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.gateway_sn)},
-            name=self.gateway_name,
-            manufacturer=MANUFACTURER,
-            model=MODEL
-        )
-    
-    async def async_press(self) -> None:
-        """按下按键，触发网关替换模式"""
-        # 防重复点击检查
-        if self._is_processing:
-            _LOGGER.debug("网关替换操作正在处理中，忽略重复点击")
-            return
-        
-        try:
-            # 设置处理中标志
-            self._is_processing = True
-            
-            # 检查是否已经存在一个网关替换配置流
-            existing_flow = None
-            for flow in self.hass.config_entries.flow.async_progress():
-                if flow["handler"] == DOMAIN and flow.get("context", {}).get("source") == "replace_gateway":
-                    existing_flow = flow
-                    break
-            
-            if existing_flow:
-                # 已经存在一个替换配置流，使用它
-                _LOGGER.info("已存在网关替换配置流，使用现有流")
-                return
-            
-            # 启动网关替换配置流
-            await self.hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": "replace_gateway"},
-                data={
-                    "gateway_sn": self.gateway_sn,
-                    "device_id": self.device_id
-                }
-            )
-            
-            _LOGGER.info("已启动网关替换配置流，设备ID: %s", self.device_id)
-            
-        except Exception as e:
-            _LOGGER.error("触发网关替换模式失败: %s", e)
-            # 发送错误通知
-            await self.hass.services.async_call(
-                "notify",
-                "persistent_notification",
-                {
-                    "title": "网关替换操作失败",
-                    "message": f"触发网关替换操作时出错: {e}\n\n请手动进入开发者工具 → 服务，选择 'window_controller_gateway.migrate_devices' 服务并填写服务数据。"
-                },
-                blocking=False
-            )
-        finally:
-            # 无论成功失败，都设置处理完成标志
-            self._is_processing = False

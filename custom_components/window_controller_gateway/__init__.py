@@ -114,7 +114,7 @@ async def _cleanup_duplicate_entities(hass: HomeAssistant, entry: ConfigEntry):
             if entity_entry.unique_id:
                 # 如果实体ID包含entry_id，则是旧格式实体（需要删除）
                 # 新格式不包含entry_id，只基于设备SN或网关SN
-                if entry_id in entity_entry.unique_id:
+                if entry_id.lower() in entity_entry.entity_id:
                     _LOGGER.info("发现旧格式实体（包含entry_id），准备删除: %s (唯一ID: %s)", entity_id, entity_entry.unique_id)
                     entities_to_remove.append(entity_id)
     
