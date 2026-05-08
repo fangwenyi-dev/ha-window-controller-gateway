@@ -8,7 +8,6 @@ from homeassistant.components.button import ButtonEntity
 
 from .gateway import GatewayPairingButton, GatewayDeviceRemoveButton
 from .base_entity import WindowControllerBaseEntity
-from .cover import WindowControllerCover
 from .const import (
     DOMAIN,
     CONF_GATEWAY_SN,
@@ -78,18 +77,6 @@ def _create_device_buttons(hass, device_manager, mqtt_handler, gateway_sn, devic
         entities_to_add.append(button)
         _LOGGER.debug("为设备 %s 添加%s按钮", device_name, button_name)
     
-    # 为设备创建 Cover 实体（放在按钮最下方，供LLM等使用）
-    cover = WindowControllerCover(
-        hass,
-        device_manager,
-        mqtt_handler,
-        gateway_sn,
-        device_sn,
-        device_name,
-        entry_id
-    )
-    entities_to_add.append(cover)
-
     return entities_to_add
 
 

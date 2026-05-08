@@ -173,7 +173,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """设置Cover回调（不创建初始实体，由button.py统一创建）"""
+    """设置Cover实体"""
     _LOGGER.info("设置Cover平台: %s", entry.entry_id)
 
     domain_data = hass.data[DOMAIN]
@@ -238,3 +238,30 @@ async def async_setup_entry(
 
     device_manager.set_device_added_callback(on_device_added)
     device_manager.set_device_removed_callback(on_device_removed)
+
+    entities = []
+    devices = device_manager.get_all_devices()
+    for device in devices:
+        if device.get("type") == DEVICE_TYPE_WINDOW_OPENER:
+            device_sn = device["sn"]
+            device_name = device["name"]
+
+            cover = WindowControllerCover(
+                hass,
+                device_manager,
+                mqtt_handler,
+                gateway_sn,
+                device_sn,
+                device_name,
+                str(entry.entry_id)
+            )
+            entities.append(cover)
+            created_covers[device_sn] = cover
+
+    if entities:
+        async_add_entities(entities)
+        _LOGGER.info("已添加 %d 个Cover实体", len(entities))
+
+        for device_sn, cover in created_covers.items():
+            mqtt_handler.add_status_callback(device_sn, cover.async_update)
+        _LOGGER.info("Cover回调注册完成")

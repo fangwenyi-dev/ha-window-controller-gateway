@@ -35,7 +35,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.COVER, Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SENSOR]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SENSOR, Platform.COVER]
 
 # 发现平台名称
 DISCOVERY_PLATFORM = "window_controller_gateway"
