@@ -98,6 +98,9 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
             else:
                 self._attr_is_closed = None
                 self._attr_current_cover_position = None
+        else:
+            self._attr_is_closed = None
+            self._attr_current_cover_position = None
 
     async def async_open_cover(self, **kwargs):
         """打开开窗器"""
