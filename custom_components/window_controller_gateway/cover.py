@@ -77,6 +77,11 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
         )
 
     @property
+    def is_closed(self):
+        """始终返回None，HA不知道状态，所以所有按钮都可点击"""
+        return None
+
+    @property
     def is_closing(self):
         """始终返回False，确保关闭按钮不会变灰"""
         return False
@@ -85,6 +90,11 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
     def is_opening(self):
         """始终返回False，确保打开按钮不会变灰"""
         return False
+
+    @property
+    def current_cover_position(self):
+        """始终返回None，HA不知道位置，所以所有按钮都可点击"""
+        return None
 
     def _update_state(self):
         """从设备管理器更新状态"""
