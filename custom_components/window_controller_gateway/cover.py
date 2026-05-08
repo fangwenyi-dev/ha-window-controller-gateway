@@ -5,7 +5,7 @@ from typing import Optional
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.components.cover import (
     CoverEntity,
     CoverEntityFeature,
@@ -26,12 +26,8 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+
 from .utils import get_entity_registry
-
-
-def _get_entity_registry(hass):
-    """获取实体注册表（带缓存）"""
-    return get_entity_registry(hass)
 
 
 class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
@@ -65,6 +61,7 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
             CoverEntityFeature.CLOSE |
             CoverEntityFeature.STOP
         )
+        self._attr_entity_category = EntityCategory.CONFIG
 
         self._update_state()
 
@@ -197,7 +194,7 @@ async def async_setup_entry(
     async def on_device_added(device_sn: str, device_name: str, device_type: str):
         """设备添加回调，自动创建Cover实体"""
         if device_type == DEVICE_TYPE_WINDOW_OPENER:
-            entity_registry = _get_entity_registry(hass)
+            entity_registry = get_entity_registry(hass)
 
             cover_unique_id = f"{gateway_sn}_{device_sn}_cover"
             cover_exists = entity_registry.async_get_entity_id("cover", DOMAIN, cover_unique_id) is not None
@@ -229,7 +226,7 @@ async def async_setup_entry(
                 mqtt_handler.remove_status_callback(device_sn, cover.async_update)
 
                 try:
-                    entity_registry = _get_entity_registry(hass)
+                    entity_registry = get_entity_registry(hass)
                     if cover.entity_id:
                         entity_registry.async_remove(cover.entity_id)
                         _LOGGER.info("已移除设备 %s 的Cover实体", device_name)

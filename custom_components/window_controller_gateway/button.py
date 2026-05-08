@@ -27,11 +27,6 @@ _LOGGER = logging.getLogger(__name__)
 from .utils import get_entity_registry
 
 
-def _get_entity_registry(hass):
-    """获取实体注册表（带缓存）"""
-    return get_entity_registry(hass)
-
-
 def _create_device_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, entry_id):
     """为设备创建所有按钮实体
     
@@ -245,7 +240,7 @@ async def async_setup_entry(
     async def on_device_added(device_sn: str, device_name: str, device_type: str):
         """设备添加回调，自动创建按钮"""
         if device_type == DEVICE_TYPE_WINDOW_OPENER:
-            entity_registry = _get_entity_registry(hass)
+            entity_registry = get_entity_registry(hass)
             entities_to_add = []
             
             # 检查删除按钮是否已存在

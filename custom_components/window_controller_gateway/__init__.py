@@ -30,7 +30,8 @@ from .const import (
     RESTART_DELAY,
     GATEWAY_PAIRING_TIMEOUT,
     POSITION_MIN,
-    POSITION_MAX
+    POSITION_MAX,
+    COMMAND_SET_POSITION
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -626,7 +627,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
 
         hass.services.async_register(
             DOMAIN,
-            "set_position",
+            COMMAND_SET_POSITION,
             handle_set_position,
             schema=vol.Schema({
                 vol.Required("device_id"): cv.string,

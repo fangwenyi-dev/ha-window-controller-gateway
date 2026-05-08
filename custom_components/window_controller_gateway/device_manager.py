@@ -415,12 +415,6 @@ class WindowControllerDeviceManager:
             
         except Exception as e:
             _LOGGER.error("触发极速状态查询失败: %s", e)
-    
-    def _get_device_model(self, device_type):
-        """获取设备模型"""
-        if device_type == DEVICE_TYPE_WINDOW_OPENER:
-            return "Window Opener"
-        return "Unknown"
         
     async def register_gateway_device(self):
         """注册网关设备"""

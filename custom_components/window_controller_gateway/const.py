@@ -39,31 +39,11 @@ class AttributeConstants:
     ATTR_POSITION = "position"
     ATTR_CURRENT_POSITION = "current_position"
     ATTR_TARGET_POSITION = "target_position"
-    ATTR_ANGLE = "angle"
-    ATTR_SPEED = "speed"
-    ATTR_FORCE = "force"
-    ATTR_SAFETY_LOCK = "safety_lock"
-    ATTR_CHILD_LOCK = "child_lock"
     ATTR_BATTERY = "battery"
-    ATTR_BATTERY_LEVEL = "battery_level"
-    ATTR_BATTERY_STATE = "battery_state"
-    ATTR_SIGNAL_STRENGTH = "signal_strength"
-    ATTR_CONNECTION_STATUS = "connection_status"
-    ATTR_LAST_SEEN = "last_seen"
-    ATTR_FIRMWARE_VERSION = "firmware_version"
-    ATTR_HARDWARE_VERSION = "hardware_version"
     POSITION_MIN = 0
     POSITION_MAX = 100
     SENSOR_TIMEOUT_MINUTES = 15
-    ATTR_IP_ADDRESS = "ip_address"
-    ATTR_MAC_ADDRESS = "mac_address"
-    ATTR_RSSI = "rssi"
-    ATTR_LQI = "lqi"
     ATTR_VOLTAGE = "voltage"
-    ATTR_TEMPERATURE = "temperature"
-    ATTR_HUMIDITY = "humidity"
-    ATTR_PRESSURE = "pressure"
-    ATTR_ILLUMINANCE = "illuminance"
 
 
 class DeviceConstants:
@@ -163,14 +143,6 @@ class EntityConstants:
     ENTITY_GATEWAY_PREFIX = "gateway_"
     ENTITY_PAIRING_BUTTON_SUFFIX = "_pair"
     ENTITY_ONLINE_SENSOR_SUFFIX = "_online"
-    
-    # 平台常量
-    PLATFORMS = [
-        "binary_sensor",
-        "button",
-        "cover",
-        "sensor"
-    ]
 
 
 class TimeConstants:
@@ -222,28 +194,8 @@ ATTR_DEVICE_TYPE = AttributeConstants.ATTR_DEVICE_TYPE
 ATTR_POSITION = AttributeConstants.ATTR_POSITION
 ATTR_CURRENT_POSITION = AttributeConstants.ATTR_CURRENT_POSITION
 ATTR_TARGET_POSITION = AttributeConstants.ATTR_TARGET_POSITION
-ATTR_ANGLE = AttributeConstants.ATTR_ANGLE
-ATTR_SPEED = AttributeConstants.ATTR_SPEED
-ATTR_FORCE = AttributeConstants.ATTR_FORCE
-ATTR_SAFETY_LOCK = AttributeConstants.ATTR_SAFETY_LOCK
-ATTR_CHILD_LOCK = AttributeConstants.ATTR_CHILD_LOCK
 ATTR_BATTERY = AttributeConstants.ATTR_BATTERY
-ATTR_BATTERY_LEVEL = AttributeConstants.ATTR_BATTERY_LEVEL
-ATTR_BATTERY_STATE = AttributeConstants.ATTR_BATTERY_STATE
-ATTR_SIGNAL_STRENGTH = AttributeConstants.ATTR_SIGNAL_STRENGTH
-ATTR_CONNECTION_STATUS = AttributeConstants.ATTR_CONNECTION_STATUS
-ATTR_LAST_SEEN = AttributeConstants.ATTR_LAST_SEEN
-ATTR_FIRMWARE_VERSION = AttributeConstants.ATTR_FIRMWARE_VERSION
-ATTR_HARDWARE_VERSION = AttributeConstants.ATTR_HARDWARE_VERSION
-ATTR_IP_ADDRESS = AttributeConstants.ATTR_IP_ADDRESS
-ATTR_MAC_ADDRESS = AttributeConstants.ATTR_MAC_ADDRESS
-ATTR_RSSI = AttributeConstants.ATTR_RSSI
-ATTR_LQI = AttributeConstants.ATTR_LQI
 ATTR_VOLTAGE = AttributeConstants.ATTR_VOLTAGE
-ATTR_TEMPERATURE = AttributeConstants.ATTR_TEMPERATURE
-ATTR_HUMIDITY = AttributeConstants.ATTR_HUMIDITY
-ATTR_PRESSURE = AttributeConstants.ATTR_PRESSURE
-ATTR_ILLUMINANCE = AttributeConstants.ATTR_ILLUMINANCE
 
 POSITION_MIN = AttributeConstants.POSITION_MIN
 POSITION_MAX = AttributeConstants.POSITION_MAX
@@ -361,9 +313,6 @@ PAIRING_STATUS_INACTIVE = StatusConstants.PAIRING_STATUS_INACTIVE
 MANUFACTURER = OtherConstants.MANUFACTURER
 MODEL = OtherConstants.MODEL
 VERSION = OtherConstants.VERSION
-
-# 平台常量
-PLATFORMS = EntityConstants.PLATFORMS
 
 # 图标常量
 ICON_GATEWAY = OtherConstants.ICON_GATEWAY

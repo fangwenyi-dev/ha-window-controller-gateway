@@ -34,12 +34,12 @@ async def async_discover_gateway(hass: HomeAssistant, gateway_sn: str, gateway_n
         replace_mode: 是否为替换模式
         current_gateway_sn: 当前网关SN（替换模式下使用）
     """
-    _LOGGER.info(f"发现新网关: {gateway_name} (SN: {gateway_sn}), 替换模式: {replace_mode}")
+    _LOGGER.info("发现新网关: %s (SN: %s), 替换模式: %s", gateway_name, gateway_sn, replace_mode)
     
     # 检查网关是否已被忽略
     if DOMAIN in hass.data and "discovery" in hass.data[DOMAIN]:
         if gateway_sn in hass.data[DOMAIN]["discovery"]["ignored_gateways"]:
-            _LOGGER.debug(f"网关 {gateway_sn} 已被忽略，跳过发现")
+            _LOGGER.debug("网关 %s 已被忽略，跳过发现", gateway_sn)
             return
     
     # 检查网关是否已配置
@@ -49,7 +49,7 @@ async def async_discover_gateway(hass: HomeAssistant, gateway_sn: str, gateway_n
     )
     
     if existing_device:
-        _LOGGER.debug(f"网关 {gateway_sn} 已存在，跳过发现")
+        _LOGGER.debug("网关 %s 已存在，跳过发现", gateway_sn)
         return
     
     # 使用基本发现流程
@@ -60,9 +60,9 @@ async def async_discover_gateway(hass: HomeAssistant, gateway_sn: str, gateway_n
         DOMAIN,
         context={
             "source": SOURCE_DISCOVERY,
-            "show_ignore": True,  # 显示"忽略"按钮
-            "replace_mode": replace_mode,  # 替换模式
-            "current_gateway_sn": current_gateway_sn  # 当前网关SN（替换模式下使用）
+            "show_ignore": True,
+            "replace_mode": replace_mode,
+            "current_gateway_sn": current_gateway_sn
         },
         data={
             "gateway_sn": gateway_sn,
@@ -77,7 +77,7 @@ async def async_discover_gateway(hass: HomeAssistant, gateway_sn: str, gateway_n
 
 async def async_ignore_gateway(hass: HomeAssistant, gateway_sn: str):
     """忽略网关设备"""
-    _LOGGER.info(f"忽略网关: {gateway_sn}")
+    _LOGGER.info("忽略网关: %s", gateway_sn)
     
     # 将网关添加到忽略列表
     if DOMAIN not in hass.data:
@@ -95,14 +95,14 @@ async def async_ignore_gateway(hass: HomeAssistant, gateway_sn: str):
     for entity in list(entity_registry.entities.values()):
         if entity.platform == DOMAIN and gateway_sn in entity.unique_id:
             entity_registry.async_remove(entity.entity_id)
-            _LOGGER.debug(f"删除网关 {gateway_sn} 的实体: {entity.entity_id}")
+            _LOGGER.debug("删除网关 %s 的实体: %s", gateway_sn, entity.entity_id)
 
 async def async_unignore_gateway(hass: HomeAssistant, gateway_sn: str):
     """取消忽略网关设备"""
-    _LOGGER.info(f"取消忽略网关: {gateway_sn}")
+    _LOGGER.info("取消忽略网关: %s", gateway_sn)
     
     # 从忽略列表中移除网关
     if DOMAIN in hass.data and "discovery" in hass.data[DOMAIN]:
         if gateway_sn in hass.data[DOMAIN]["discovery"]["ignored_gateways"]:
             hass.data[DOMAIN]["discovery"]["ignored_gateways"].remove(gateway_sn)
-            _LOGGER.debug(f"网关 {gateway_sn} 已从忽略列表中移除")
+            _LOGGER.debug("网关 %s 已从忽略列表中移除", gateway_sn)

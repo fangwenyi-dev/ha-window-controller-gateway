@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 
 from datetime import timedelta
 
@@ -19,17 +19,10 @@ from .const import (
     DEFAULT_GATEWAY_NAME
 )
 from .base_entity import WindowControllerBaseEntity
-from .utils import get_device_gateway_mapping
-from .const import SENSOR_SCAN_INTERVAL
-
-# 传感器扫描间隔，设置为10秒以提高更新频率
-SCAN_INTERVAL = timedelta(seconds=SENSOR_SCAN_INTERVAL)
 
 _LOGGER = logging.getLogger(__name__)
 
 from .utils import get_entity_registry
-
-# 直接使用从utils导入的get_entity_registry函数，不再重复定义
 
 
 class WindowControllerBatterySensor(WindowControllerBaseEntity, SensorEntity):
@@ -64,6 +57,7 @@ class WindowControllerBatterySensor(WindowControllerBaseEntity, SensorEntity):
         self.entry_id = entry_id
         # 添加图标
         self._attr_icon = "mdi:battery"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
         
         # 初始化状态
         self._update_state()
@@ -137,6 +131,7 @@ class WindowControllerStatusSensor(SensorEntity):
         self._attr_unique_id = f"{gateway_sn}_{device_sn}_status"
         self._attr_device_class = SensorDeviceClass.ENUM
         self._attr_options = ["closed", "open"]
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self.last_update_time = None  # 最后更新时间
         
         # 初始化状态
