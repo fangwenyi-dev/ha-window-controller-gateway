@@ -49,7 +49,7 @@ class WindowControllerBatterySensor(WindowControllerBaseEntity, SensorEntity):
             device_name=device_name
         )
         
-        self._attr_name = f"{device_name} 电池电压"
+        self._attr_name = "电池电压"
         # unique_id 基于设备SN，与v1.1.8保持一致
         self._attr_unique_id = f"{gateway_sn}_{device_sn}_battery"
         self._attr_device_class = SensorDeviceClass.VOLTAGE
@@ -109,6 +109,8 @@ class WindowControllerBatterySensor(WindowControllerBaseEntity, SensorEntity):
 class WindowControllerStatusSensor(SensorEntity):
     """开窗器状态传感器"""
     
+    _attr_has_entity_name = True
+    
     def __init__(
         self,
         hass: HomeAssistant,
@@ -125,7 +127,7 @@ class WindowControllerStatusSensor(SensorEntity):
         self.device_sn = device_sn
         self._device_name = device_name
         self.entry_id = entry_id
-        self._attr_name = f"{device_name} 状态"
+        self._attr_name = "状态"
         # unique_id 基于设备SN，与v1.1.8保持一致
         self._attr_unique_id = f"{gateway_sn}_{device_sn}_status"
         self._attr_device_class = SensorDeviceClass.ENUM

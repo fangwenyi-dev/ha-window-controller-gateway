@@ -54,7 +54,6 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
             device_name=device_name
         )
 
-        self._attr_name = device_name
         self._attr_unique_id = f"{gateway_sn}_{device_sn}_cover"
         self._attr_entity_category = EntityCategory.CONFIG
         self.entry_id = entry_id

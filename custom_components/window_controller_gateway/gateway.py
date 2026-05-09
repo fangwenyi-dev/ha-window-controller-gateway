@@ -34,6 +34,8 @@ _LOGGER = logging.getLogger(__name__)
 class GatewayOnlineSensor(BinarySensorEntity):
     """网关在线状态传感器"""
     
+    _attr_has_entity_name = True
+    
     def __init__(
         self,
         hass: HomeAssistant,
@@ -50,7 +52,7 @@ class GatewayOnlineSensor(BinarySensorEntity):
         self.gateway_sn = gateway_sn
         self.gateway_name = gateway_name
         self.entry_id = entry_id
-        self._attr_name = f"{gateway_name} 在线"
+        self._attr_name = "在线"
         # unique_id基于网关SN，确保同一网关只有一个在线状态传感器
         self._attr_unique_id = f"{gateway_sn}_online"
         self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
@@ -109,6 +111,8 @@ class GatewayOnlineSensor(BinarySensorEntity):
 class GatewayPairingButton(ButtonEntity):
     """网关配对按键"""
     
+    _attr_has_entity_name = True
+    
     def __init__(
         self,
         hass: HomeAssistant,
@@ -125,7 +129,7 @@ class GatewayPairingButton(ButtonEntity):
         self.gateway_sn = gateway_sn
         self.gateway_name = gateway_name
         self.entry_id = entry_id
-        self._attr_name = f"{gateway_name} 配对"
+        self._attr_name = "配对"
         # unique_id基于网关SN，确保同一网关只有一个配对按钮
         self._attr_unique_id = f"{gateway_sn}_pairing"
         # 添加图标
@@ -205,6 +209,8 @@ class GatewayPairingButton(ButtonEntity):
 class GatewayDeviceRemoveButton(ButtonEntity):
     """网关设备删除按键"""
     
+    _attr_has_entity_name = True
+    
     def __init__(
         self,
         hass: HomeAssistant,
@@ -225,7 +231,7 @@ class GatewayDeviceRemoveButton(ButtonEntity):
         self.device_sn = device_sn
         self.device_name = device_name
         self.entry_id = entry_id
-        self._attr_name = f"开窗器 {device_sn[-4:]} 删除"
+        self._attr_name = f"{device_sn[-4:]} 删除"
         # unique_id基于网关SN和设备SN，确保同一网关的同一设备只有一个删除按钮
         self._attr_unique_id = f"{gateway_sn}_remove_{device_sn}"
         # 添加图标

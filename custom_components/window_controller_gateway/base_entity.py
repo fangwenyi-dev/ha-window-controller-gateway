@@ -14,6 +14,8 @@ class WindowControllerBaseEntity:
     提供通用的设备实体管理功能，减少代码重复
     """
     
+    _attr_has_entity_name = True
+    
     def __init__(
         self,
         hass: HomeAssistant,
