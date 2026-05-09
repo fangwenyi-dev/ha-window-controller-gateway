@@ -7,11 +7,14 @@ Home Assistant 自定义集成，用于控制慧尖开窗器网关及设备。
 - ✅ 支持网关在线状态监控
 - ✅ 支持网关配对功能
 - ✅ 支持开窗器设备控制（开、关、停、A）
+- ✅ 支持 Cover 实体（LLM 语音控制兼容）
 - ✅ 支持子设备删除功能
 - ✅ 支持电池电压和窗户状态传感器
 - ✅ 支持 MQTT 通信协议
 - ✅ 支持设备自动发现和添加
 - ✅ 支持子设备顺序命名（开窗器 01, 开窗器 02 等）
+- ✅ 支持多网关管理
+- ✅ 支持网关替换和设备迁移
 
 ## 安装方法
 
@@ -71,6 +74,7 @@ Home Assistant 自定义集成，用于控制慧尖开窗器网关及设备。
 - **关**：控制开窗器完全关闭
 - **停**：停止开窗器当前动作
 - **A**：执行自定义动作（对应 w_travel: 200）
+- **Cover**：Cover 实体支持 open_cover/close_cover/stop_cover 语义，兼容 LLM 语音控制
 
 ### 网关控制
 - **配对**：触发网关进入配对模式，可添加新设备
@@ -78,8 +82,8 @@ Home Assistant 自定义集成，用于控制慧尖开窗器网关及设备。
 
 ## 传感器
 
-- **电池电压**：显示开窗器电池电压
-- **状态**：显示开窗器当前状态（开/关）
+- **电池电压**：显示开窗器电池电压（诊断类）
+- **状态**：显示开窗器当前状态（开/关，诊断类）
 
 ## MQTT 主题
 
@@ -183,6 +187,23 @@ Home Assistant 自定义集成，用于控制慧尖开窗器网关及设备。
 - **并发限制**：系统会根据负载自动调整并发数，无需手动配置
 
 ## 版本历史
+
+### v1.3.2
+- 优化: cover.py 移除空操作 async_update/_update_state 代码
+- 优化: device_manager.py 简化网关SN匹配（精确匹配替代6种模糊匹配）
+- 优化: config_flow.py MockDeviceManager 移至模块级别
+- 优化: config_flow.py context 键使用 .get() 安全访问
+- 优化: 清理过时注释和死代码
+
+### v1.3.1
+- 修复: services.yaml 添加 migrate_devices 服务定义
+- 修复: strings.json/zh-CN.json 补充服务翻译
+- 修复: __init__.py 清理注释死代码和未使用的函数
+- 修复: device_manager.py 绝对导入改为相对导入
+- 修复: sensor.py MANUFACTURER 移至顶部导入
+- 修复: gateway.py 简化删除按钮实体查找逻辑
+- 修复: __init__.py 持久化数据写入改为原子写入（tmp + os.replace）
+- 修复: cover.py 移除 __init__ 中无意义的 _update_state() 调用
 
 ### v1.3.0
 - 新增：支持 Cover 实体，LLM 语音控制可直接使用 open_cover/close_cover/stop_cover 控制开窗器
