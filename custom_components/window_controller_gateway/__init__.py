@@ -81,8 +81,11 @@ async def _save_persistent_data(hass: HomeAssistant) -> None:
         }
         
         def _write_file():
-            with open(data_file, 'w', encoding='utf-8') as f:
+            import tempfile
+            tmp_file = data_file + ".tmp"
+            with open(tmp_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_file, data_file)
         
         await hass.async_add_executor_job(_write_file)
         
@@ -150,15 +153,6 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
         _LOGGER.info("开窗器网关发现平台设置成功")
     except Exception as e:
         _LOGGER.error("设置开窗器网关发现平台失败: %s", e)
-    
-    # 注册发现平台处理函数
-    try:
-        from homeassistant.helpers import discovery
-        
-        # 确保集成能够处理发现流程
-        _LOGGER.info("开窗器网关发现平台注册成功")
-    except Exception as e:
-        _LOGGER.error("注册开窗器网关发现平台失败: %s", e)
     
     # 导入辅助函数
     from .utils import find_gateway_by_device_id, find_device_by_device_id
@@ -396,52 +390,6 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
                 
                 _LOGGER.info("设备迁移成功")
                 
-                # # 4. 验证实体迁移（改为可选，不阻塞主流程）
-                # try:
-                #     migration_verified = await new_manager._verify_entity_migration(
-                #         old_gateway_sn,
-                #         new_gateway_sn
-                #     )
-                #     if migration_verified:
-                #         _LOGGER.info("实体迁移验证成功")
-                #         # 发送验证成功事件
-                #         hass.bus.async_fire(
-                #             f"{DOMAIN}_migration_progress",
-                #             {
-                #                 "old_gateway_sn": old_gateway_sn,
-                #                 "new_gateway_sn": new_gateway_sn,
-                #                 "status": "verified",
-                #                 "progress": 75,
-                #                 "message": "实体迁移验证成功"
-                #             }
-                #         )
-                #     else:
-                #         _LOGGER.warning("实体迁移验证失败，但设备已迁移")
-                #         # 发送验证失败事件
-                #         hass.bus.async_fire(
-                #             f"{DOMAIN}_migration_progress",
-                #             {
-                #                 "old_gateway_sn": old_gateway_sn,
-                #                 "new_gateway_sn": new_gateway_sn,
-                #                 "status": "verification_failed",
-                #                 "progress": 75,
-                #                 "message": "实体迁移验证失败，但设备已迁移"
-                #             }
-                #         )
-                # except Exception as verify_error:
-                #     _LOGGER.error("验证实体迁移失败，但不影响迁移结果: %s", verify_error)
-                #     # 发送验证错误事件
-                #     hass.bus.async_fire(
-                #         f"{DOMAIN}_migration_progress",
-                #         {
-                #             "old_gateway_sn": old_gateway_sn,
-                #             "new_gateway_sn": new_gateway_sn,
-                #             "status": "verification_error",
-                #             "progress": 75,
-                #             "message": f"验证实体迁移失败: {verify_error}"
-                #         }
-                #     )
-                
                 # 直接发送迁移成功事件
                 hass.bus.async_fire(
                     f"{DOMAIN}_migration_progress",
@@ -465,7 +413,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
                             "old_gateway_sn": old_gateway_sn,
                             "new_gateway_sn": new_gateway_sn,
                             "success": True,
-                            "device_count": len(migrated_devices) if 'migrated_devices' in locals() else 0
+                            "device_count": len(migrated_devices)
                         }
                     )
                     
@@ -548,61 +496,6 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
                     "message": f"迁移失败: {str(e)}"
                 }
             )
-
-    async def _safe_reload_platforms(hass: HomeAssistant, config_entry):
-        """安全地重新加载平台"""
-        if not isinstance(config_entry, ConfigEntry):
-            _LOGGER.error("config_entry 不是 ConfigEntry 类型")
-            return
-        
-        # 使用本地定义的PLATFORMS变量（使用Home Assistant的Platform枚举）
-        for platform in PLATFORMS:
-            try:
-                _LOGGER.debug("重新加载平台: %s", platform)
-                
-                # 检查方法是否存在
-                if hasattr(hass.config_entries, 'async_forward_entry_unload'):
-                    try:
-                        await hass.config_entries.async_forward_entry_unload(config_entry, platform)
-                        _LOGGER.debug("平台 %s 卸载成功", platform)
-                    except Exception as unload_error:
-                        _LOGGER.warning("卸载平台 %s 失败: %s", platform, unload_error)
-                
-                if hasattr(hass.config_entries, 'async_forward_entry_setup'):
-                    try:
-                        await hass.config_entries.async_forward_entry_setup(config_entry, platform)
-                        _LOGGER.debug("平台 %s 重新加载成功", platform)
-                    except AttributeError as e:
-                        _LOGGER.error("async_forward_entry_setup 调用失败: %s", e)
-                        # 尝试使用备用方法
-                        await _alternative_setup_platform(hass, config_entry, platform)
-                else:
-                    # 如果没有async_forward_entry_setup方法，使用备用方法
-                    await _alternative_setup_platform(hass, config_entry, platform)
-                    
-            except Exception as e:
-                _LOGGER.error("重新加载平台 %s 时发生错误: %s", platform, e)
-
-    async def _alternative_setup_platform(hass: HomeAssistant, config_entry, platform):
-        """备用平台设置方法"""
-        try:
-            # 手动触发平台设置
-            from . import cover, button, sensor, binary_sensor
-            
-            setup_functions = {
-                "cover": cover.async_setup_entry,
-                "button": button.async_setup_entry,
-                "sensor": sensor.async_setup_entry,
-                "binary_sensor": binary_sensor.async_setup_entry
-            }
-            
-            if platform in setup_functions:
-                async_add_entities = lambda entities: None  # 占位符
-                await setup_functions[platform](hass, config_entry, async_add_entities)
-                _LOGGER.info("平台 %s 设置成功（备用方法）", platform)
-                
-        except Exception as e:
-            _LOGGER.error("备用平台设置方法失败: %s", e)
 
     # 注册服务
     try:

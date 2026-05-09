@@ -259,51 +259,11 @@ class GatewayDeviceRemoveButton(ButtonEntity):
             from homeassistant.helpers.entity_registry import async_get
             entity_registry = async_get(self.hass)
             
-            # 方法1：使用精确的唯一ID查找
             entity_id = entity_registry.async_get_entity_id("button", DOMAIN, self._attr_unique_id)
             if entity_id:
                 entity_registry.async_remove(entity_id)
                 _LOGGER.info("已从实体注册表中删除删除按钮: %s", entity_id)
             else:
-                # 方法2：使用不区分大小写的部分匹配
-                import re
-                found = False
-                
-                # 遍历所有实体，查找匹配的按钮
-                for entity in entity_registry.entities.values():
-                    if entity.domain == "button" and entity.platform == DOMAIN:
-                        # 检查实体是否包含网关SN和设备SN（不区分大小写）
-                        unique_id_lower = entity.unique_id.lower()
-                        gateway_sn_lower = self.gateway_sn.lower()
-                        device_sn_lower = self.device_sn.lower()
-                        
-                        if gateway_sn_lower in unique_id_lower and device_sn_lower in unique_id_lower:
-                            entity_registry.async_remove(entity.entity_id)
-                            _LOGGER.info("已通过不区分大小写的部分匹配从实体注册表中删除删除按钮: %s (唯一ID: %s)", entity.entity_id, entity.unique_id)
-                            found = True
-                            break
-                
-                # 方法3：如果仍未找到，尝试使用更宽松的匹配
-                if not found:
-                    for entity in entity_registry.entities.values():
-                        if entity.domain == "button" and entity.platform == DOMAIN:
-                            # 检查实体ID是否包含设备SN的一部分
-                            if self.device_sn[-4:] in entity.unique_id:
-                                entity_registry.async_remove(entity.entity_id)
-                                _LOGGER.info("已通过设备SN后4位匹配从实体注册表中删除删除按钮: %s (唯一ID: %s)", entity.entity_id, entity.unique_id)
-                                found = True
-                                break
-                
-                if not found:
-                    # 实体未找到是正常情况，因为它可能已经被删除或不存在
-                    # 将警告日志改为调试日志，避免在正常操作中产生错误信息
-                    _LOGGER.debug("删除按钮实体未找到，可能已经被删除: %s", self._attr_unique_id)
-                    # 记录所有相关实体，以便调试
-                    related_entities = []
-                    for entity in entity_registry.entities.values():
-                        if entity.domain == 'button' and entity.platform == DOMAIN:
-                            related_entities.append((entity.entity_id, entity.unique_id))
-                    if related_entities:
-                        _LOGGER.debug("注册表中相关的按钮实体: %s", related_entities)
+                _LOGGER.debug("删除按钮实体未找到，可能已经被删除: %s", self._attr_unique_id)
         except Exception as e:
             _LOGGER.error("触发设备解绑模式失败: %s", e)

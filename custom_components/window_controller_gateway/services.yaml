@@ -66,3 +66,28 @@ check_gateway_status:
       example: "window_gateway_123456"
       selector:
         text:
+
+migrate_devices:
+  name: 迁移设备
+  description: 将子设备从旧网关迁移到新网关
+  fields:
+    old_gateway_sn:
+      name: 旧网关SN
+      description: 旧网关的序列号
+      required: true
+      example: "100121501186"
+      selector:
+        text:
+    new_gateway_sn:
+      name: 新网关SN
+      description: 新网关的序列号
+      required: true
+      example: "100121501187"
+      selector:
+        text:
+    remove_old_gateway:
+      name: 移除旧网关
+      description: 迁移完成后是否移除旧网关
+      default: false
+      selector:
+        boolean:

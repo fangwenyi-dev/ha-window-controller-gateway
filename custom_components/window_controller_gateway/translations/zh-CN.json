@@ -43,6 +43,14 @@
     "set_position": {
       "name": "设置位置",
       "description": "设置窗帘位置"
+    },
+    "check_gateway_status": {
+      "name": "检查网关状态",
+      "description": "检查网关的在线状态和连接情况"
+    },
+    "migrate_devices": {
+      "name": "迁移设备",
+      "description": "将子设备从旧网关迁移到新网关"
     }
   },
   "device_automation": {

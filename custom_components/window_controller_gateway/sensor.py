@@ -16,7 +16,8 @@ from .const import (
     DOMAIN,
     CONF_GATEWAY_SN,
     CONF_GATEWAY_NAME,
-    DEFAULT_GATEWAY_NAME
+    DEFAULT_GATEWAY_NAME,
+    MANUFACTURER
 )
 from .base_entity import WindowControllerBaseEntity
 
@@ -70,8 +71,6 @@ class WindowControllerBatterySensor(WindowControllerBaseEntity, SensorEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """返回设备信息"""
-        from .const import MANUFACTURER
-        # 注意：不使用via_device，避免网关离线时子设备也被标记为不可用
         return DeviceInfo(
             identifiers={(DOMAIN, self.device_sn)},
             name=self.device_name,
@@ -140,8 +139,6 @@ class WindowControllerStatusSensor(SensorEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """返回设备信息"""
-        from .const import MANUFACTURER
-        # 注意：不使用via_device，避免网关离线时子设备也被标记为不可用
         return DeviceInfo(
             identifiers={(DOMAIN, self.device_sn)},
             name=self._device_name,

@@ -5,7 +5,7 @@ from typing import Optional
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.components.cover import (
     CoverEntity,
     CoverEntityFeature,
@@ -61,9 +61,6 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
             CoverEntityFeature.CLOSE |
             CoverEntityFeature.STOP
         )
-        self._attr_entity_category = EntityCategory.CONFIG
-
-        self._update_state()
 
     @property
     def device_info(self) -> DeviceInfo:

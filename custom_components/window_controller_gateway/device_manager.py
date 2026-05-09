@@ -86,7 +86,7 @@ class WindowControllerDeviceManager:
         """触发持久化保存（异步）"""
         try:
             import sys
-            from custom_components.window_controller_gateway import _save_persistent_data
+            from . import _save_persistent_data
             self.hass.async_create_task(_save_persistent_data(self.hass))
         except Exception as e:
             _LOGGER.warning("触发持久化保存失败: %s", e)
