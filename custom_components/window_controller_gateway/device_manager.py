@@ -1,4 +1,4 @@
-"""设备管理器 - 修正版"""
+"""设备管理器"""
 import logging
 import asyncio
 import time
@@ -32,11 +32,7 @@ class WindowControllerDeviceManager:
     """设备管理器类"""
     
     # 需要重新创建的实体类型和平台映射
-    entity_recreate_map = {
-        "button": DOMAIN,
-        "sensor": DOMAIN,
-        "binary_sensor": DOMAIN
-    }
+    entity_recreate_platforms = ["button", "sensor", "binary_sensor"]
     
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
         """初始化设备管理器"""
@@ -140,7 +136,7 @@ class WindowControllerDeviceManager:
         return self._entity_registry_cache
     
     async def setup(self) -> bool:
-        """设置设备管理器 - 极速优化版"""
+        """设置设备管理器"""
         import time
         import asyncio
         start_time = time.time()
@@ -165,24 +161,7 @@ class WindowControllerDeviceManager:
                 current_lower = self.gateway_sn.lower()
                 mapped_lower = mapped_gateway_sn.lower()
                 
-                # 各种匹配方式
-                exact_match = (mapped_lower == current_lower)
-                # 检查当前网关是否以映射的网关SN开头（当前网关可能更长）
-                prefix_match = current_lower.startswith(mapped_lower)
-                # 检查映射的网关SN是否以当前网关SN开头（映射的网关可能更长）
-                prefix_match_reverse = mapped_lower.startswith(current_lower)
-                # 包含匹配：检查任意一个是否包含另一个
-                contains_match = (mapped_lower in current_lower) or (current_lower in mapped_lower)
-                # 截断比较：取较短的SN的最后8位
-                short_len = min(len(current_lower), len(mapped_lower), 8)
-                truncate_match = (current_lower[-short_len:] == mapped_lower[-short_len:]) if short_len > 0 else False
-                # 最后8位匹配：这是最常用的匹配方式
-                last8_match = (current_lower[-8:] == mapped_lower[-8:])
-                
-                gateway_match = exact_match or prefix_match or prefix_match_reverse or contains_match or truncate_match or last8_match
-                
-                _LOGGER.info("网关匹配计算: exact=%s, prefix=%s, prefix_rev=%s, contains=%s, truncate=%s, last8=%s, final=%s", 
-                           exact_match, prefix_match, prefix_match_reverse, contains_match, truncate_match, last8_match, gateway_match)
+                gateway_match = (mapped_lower == current_lower)
                 
                 if gateway_match and device_sn not in self.devices:
                     device_name = f"开窗器 {self.gateway_sn[-4:]}-{device_sn[-4:]}"
@@ -217,16 +196,12 @@ class WindowControllerDeviceManager:
             # 如果没有匹配到设备，尝试更新映射表
             if processed_count == 0 and device_to_gateway_mapping:
                 _LOGGER.debug("没有匹配到设备，尝试更新映射表")
-                # 检查是否有设备的网关SN与当前网关SN相似
                 for device_sn, mapped_gateway_sn in list(device_to_gateway_mapping.items()):
                     mapped_lower = mapped_gateway_sn.lower()
                     current_lower = self.gateway_sn.lower()
-                    # 检查最后8位是否匹配
-                    if mapped_lower[-8:] == current_lower[-8:]:
-                        _LOGGER.info("发现相似网关SN: mapped=%s, current=%s, 更新映射表", mapped_gateway_sn, self.gateway_sn)
-                        # 更新映射表
+                    if mapped_lower == current_lower:
+                        _LOGGER.info("发现匹配网关SN: %s, 更新映射表", mapped_gateway_sn)
                         device_to_gateway_mapping[device_sn] = self.gateway_sn
-                        # 立即加载这个设备
                         device_name = f"开窗器 {self.gateway_sn[-4:]}-{device_sn[-4:]}"
                         self.devices[device_sn] = {
                             "sn": device_sn,
@@ -236,17 +211,12 @@ class WindowControllerDeviceManager:
                             "attributes": {}
                         }
                         _LOGGER.info("更新后加载设备: %s", device_sn)
-                        
-                        # 触发设备添加回调
                         for callback in self._device_added_callbacks:
                             try:
                                 self.hass.create_task(callback(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER))
                             except Exception as e:
                                 _LOGGER.error("调用设备添加回调失败: %s", e)
-                        
                         processed_count += 1
-                
-                # 保存更新后的映射表
                 if processed_count > 0:
                     self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING] = device_to_gateway_mapping
                     _LOGGER.info("映射表已更新并保存")
@@ -1383,16 +1353,15 @@ class WindowControllerDeviceManager:
         
         entity_registry = async_get_entity_registry(self.hass)
         
-        # 使用类常量 entity_recreate_map
+        # 使用类常量 entity_recreate_platforms
         
         all_entities_to_remove = []
         
-        for platform, domain in self.entity_recreate_map.items():
-            # 查找需要重新创建的实体
+        for platform in self.entity_recreate_platforms:
             entities_to_remove = []
             
             for entity_id, entity_entry in entity_registry.entities.items():
-                if entity_entry.platform == domain and entity_entry.domain == platform:
+                if entity_entry.platform == DOMAIN and entity_entry.domain == platform:
                     # 检查是否属于要迁移的设备
                     for device_sn in device_sns:
                         if device_sn in entity_entry.unique_id:
@@ -1431,7 +1400,7 @@ class WindowControllerDeviceManager:
         # 触发平台重新加载
         if all_entities_to_remove:
             _LOGGER.info("触发平台重新加载，共 %d 个实体", len(all_entities_to_remove))
-            for platform in entity_recreate_map.keys():
+            for platform in self.entity_recreate_platforms:
                 await self._reload_platform(platform)
         
         # 重新加载所有已配置的网关，确保所有设备实体都被正确创建

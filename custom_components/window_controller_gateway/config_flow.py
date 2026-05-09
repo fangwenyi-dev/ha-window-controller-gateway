@@ -28,6 +28,34 @@ def validate_gateway_sn(sn: str) -> bool:
         return False
     return bool(re.match(r'^[a-zA-Z0-9]+$', sn))
 
+class MockDeviceManager:
+    """用于连接测试的模拟设备管理器"""
+    def __init__(self):
+        self._manually_removed_devices = set()
+    
+    async def update_gateway_status(self, status):
+        pass
+    
+    async def update_device_status(self, device_sn, status, attributes=None):
+        pass
+    
+    def get_gateway_info(self):
+        return {"name": "Test Gateway"}
+    
+    def get_all_devices(self):
+        return []
+    
+    def get_device(self, device_sn):
+        return None
+    
+    async def add_device(self, device_sn, device_name, device_type=None, force=False, is_manual_pairing=False):
+        _LOGGER.debug("模拟添加设备: %s, 名称: %s, force: %s, is_manual_pairing: %s", device_sn, device_name, force, is_manual_pairing)
+        return device_sn
+    
+    def is_device_manually_removed(self, device_sn):
+        return device_sn in self._manually_removed_devices
+
+
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Configuration flow handler class"""
     VERSION = 1
@@ -193,14 +221,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if user_input.get("confirm"):
                 # 保存迁移信息到数据中，以便在配置条目设置完成后使用
                 migration_info = {
-                    "old_gateway_sn": self.context["old_gateway_sn"],
+                    "old_gateway_sn": self.context.get("old_gateway_sn", ""),
                     "remove_old_gateway": user_input.get("remove_old", False)
                 }
                 
                 _LOGGER.info("保存迁移信息到数据: %s", migration_info)
                 
-                # 检查是否已经存在具有相同SN的网关配置条目
-                new_gateway_sn = self.context["new_gateway_sn"]
+                new_gateway_sn = self.context.get("new_gateway_sn", "")
                 existing_entries = self.hass.config_entries.async_entries(DOMAIN)
                 existing_entry = None
                 
@@ -242,8 +269,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional("remove_old", default=False): bool,
             }),
             description_placeholders={
-                "old_gateway": self.context.get("old_gateway_name", self.context["old_gateway_sn"]),
-                "new_gateway": self.context.get("new_gateway_name", self.context["new_gateway_sn"]),
+                "old_gateway": self.context.get("old_gateway_name", self.context.get("old_gateway_sn", "未知")),
+                "new_gateway": self.context.get("new_gateway_name", self.context.get("new_gateway_sn", "未知")),
                 "device_count": self.context.get("device_count", "未知")
             }
         )
@@ -257,37 +284,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not self.hass.data.get("mqtt"):
                 _LOGGER.error("MQTT integration not available")
                 return False
-
-            # Create a temporary MQTT handler for testing
-            # We'll use a minimal device manager mock since we just need to test connectivity
-            class MockDeviceManager:
-                def __init__(self):
-                    self._manually_removed_devices = set()
-                
-                async def update_gateway_status(self, status):
-                    pass
-                
-                async def update_device_status(self, device_sn, status, attributes=None):
-                    pass
-                
-                def get_gateway_info(self):
-                    return {"name": "Test Gateway"}
-                
-                def get_all_devices(self):
-                    return []
-                
-                def get_device(self, device_sn):
-                    # 模拟获取设备，返回None
-                    return None
-                
-                async def add_device(self, device_sn, device_name, device_type=None, force=False, is_manual_pairing=False):
-                    # 模拟添加设备
-                    _LOGGER.debug("模拟添加设备: %s, 名称: %s, force: %s, is_manual_pairing: %s", device_sn, device_name, force, is_manual_pairing)
-                    return device_sn
-                
-                def is_device_manually_removed(self, device_sn):
-                    """检查设备是否被手动删除过"""
-                    return device_sn in self._manually_removed_devices
 
             mock_device_manager = MockDeviceManager()
             mqtt_handler = WindowControllerMQTTHandler(self.hass, gateway_sn, mock_device_manager)
