@@ -5,7 +5,7 @@ from typing import Optional
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.components.cover import (
     CoverEntity,
     CoverEntityFeature,
@@ -55,6 +55,7 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
 
         self._attr_name = device_name
         self._attr_unique_id = f"{gateway_sn}_{device_sn}_cover"
+        self._attr_entity_category = EntityCategory.CONFIG
         self.entry_id = entry_id
         self._attr_supported_features = (
             CoverEntityFeature.OPEN |
