@@ -4,6 +4,7 @@ import json
 import asyncio
 import random
 import weakref
+import time
 from datetime import datetime
 from typing import Dict, Any, Optional, Callable, Union
 
@@ -18,6 +19,7 @@ from .const import (
     ATTR_BATTERY,
     DEVICE_TYPE_WINDOW_OPENER,
     GATEWAY_CHECK_INTERVAL,
+    GATEWAY_TIMEOUT_SECONDS,
     INITIAL_RETRY_DELAY,
     MQTT_MAX_RETRIES,
     MQTT_MIN_JITTER,
@@ -32,7 +34,11 @@ from .const import (
     COMMAND_VALUE_CLOSE,
     COMMAND_VALUE_STOP,
     COMMAND_VALUE_TOGGLE,
-    ATTRIBUTE_W_TRAVEL
+    ATTRIBUTE_W_TRAVEL,
+    DEFAULT_COMMAND_ID,
+    TOPIC_GATEWAY_REQ_FORMAT,
+    TOPIC_GATEWAY_RSP,
+    DEVICE_TO_GATEWAY_MAPPING,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,7 +54,6 @@ class WindowControllerMQTTHandler:
         self.connected = False
         self.pairing_active = False
         self.last_gateway_report_time = None  # 最后收到网关002上报的时间
-        from .const import DEFAULT_COMMAND_ID, TOPIC_GATEWAY_REQ_FORMAT, TOPIC_GATEWAY_RSP
         self.command_id = DEFAULT_COMMAND_ID  # 命令ID初始值
         self._check_task = None  # 后台任务引用
         
@@ -60,7 +65,6 @@ class WindowControllerMQTTHandler:
         self._status_callbacks = {}
         
         # 消息去重 - 记录最近处理的消息ID，避免重复处理
-        import time
         self._processed_messages = {}  # {message_id: timestamp}
         self._message_dedup_duration = 5  # 5秒内相同ID的消息认为是重复
     
@@ -101,7 +105,6 @@ class WindowControllerMQTTHandler:
             while True:
                 await asyncio.sleep(GATEWAY_CHECK_INTERVAL)  # 每30秒检查一次
                 try:
-                    from .const import GATEWAY_TIMEOUT_SECONDS
                     # 检查是否超过超时时间没有收到上报
                     if self.last_gateway_report_time:
                         time_diff = datetime.now() - self.last_gateway_report_time
@@ -142,7 +145,6 @@ class WindowControllerMQTTHandler:
                         return
                     
                     # 消息去重检查 - 使用 ctype + id + sn 作为唯一标识
-                    import time
                     msg_key = f"{ctype}_{payload.get('id', 0)}_{response_sn}"
                     current_time = time.time()
                     
@@ -302,7 +304,6 @@ class WindowControllerMQTTHandler:
                     # 1. 基础指数退避
                     delay = base_delay * (2 ** (retry_count - 1))
                     # 2. 添加抖动（随机化）
-                    import random
                     jitter = random.uniform(min_jitter, max_jitter)
                     jittered_delay = delay * jitter
                     # 3. 确保延迟在合理范围内
@@ -765,8 +766,6 @@ class WindowControllerMQTTHandler:
     
     async def fast_discovery(self):
         """快速设备发现 - 优化版，添加设备状态预查询逻辑"""
-        import asyncio
-        import time
         start_time = time.time()
         
         # 1. 立即发送发现命令
@@ -827,7 +826,6 @@ class WindowControllerMQTTHandler:
             tasks: 要执行的异步任务列表
             task_type: 任务类型描述，用于日志
         """
-        import asyncio
         if not tasks:
             return
         
@@ -978,7 +976,6 @@ class WindowControllerMQTTHandler:
                             update_tasks.append(self._update_existing_device(device_sn, device_info))
                         else:
                             # 检查设备是否已添加到其他网关中
-                            from .const import DEVICE_TO_GATEWAY_MAPPING
                             if DEVICE_TO_GATEWAY_MAPPING in self.hass.data[DOMAIN]:
                                 device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
                                 if device_sn in device_to_gateway_mapping:
@@ -1020,7 +1017,6 @@ class WindowControllerMQTTHandler:
         }
         
         # 发送响应到网关 - 按照协议要求发送到gateway/<sn>/req主题
-        from homeassistant.components import mqtt
         await mqtt.async_publish(
             self.hass,
             self.TOPIC_GATEWAY_REQ,
@@ -1101,7 +1097,6 @@ class WindowControllerMQTTHandler:
         if errcode == 0 and device_sn:
             # 绑定成功，添加设备
             # 检查设备是否已经添加到其他网关中
-            from .const import DEVICE_TO_GATEWAY_MAPPING
             if DEVICE_TO_GATEWAY_MAPPING in self.hass.data[DOMAIN]:
                 device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
                 if device_sn in device_to_gateway_mapping:

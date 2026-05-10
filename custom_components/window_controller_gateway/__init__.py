@@ -698,7 +698,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             remove_old_gateway = migration_info.get("remove_old_gateway", False)
             _LOGGER.info("准备迁移设备，旧网关: %s, 新网关: %s, 是否移除旧网关: %s", old_gateway_sn, gateway_sn, remove_old_gateway)
             if old_gateway_sn and old_gateway_sn != gateway_sn:
-                    # 创建后台任务执行迁移
+                # 创建后台任务执行迁移
                 async def migrate_devices_async():
                     """异步执行设备迁移"""
                     try:

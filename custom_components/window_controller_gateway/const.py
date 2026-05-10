@@ -167,7 +167,7 @@ class OtherConstants:
     # 其他常量
     MANUFACTURER = "慧尖"
     MODEL = "慧尖开窗器网关"
-    VERSION = "1.3.1"
+    VERSION = "1.3.2"
     
     # 图标常量
     ICON_GATEWAY = "mdi:gateway"

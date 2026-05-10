@@ -4,6 +4,7 @@ from typing import Optional
 from homeassistant.core import HomeAssistant
 
 from .utils import get_device_gateway_mapping
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,6 +50,26 @@ class WindowControllerBaseEntity:
             str: 设备当前关联的网关序列号
         """
         return get_device_gateway_mapping(self.hass, self.device_sn) or self.gateway_sn
+    
+    def _get_mqtt_handler(self):
+        """获取设备当前关联的正确MQTT处理器
+        
+        设备迁移后，设备关联的网关可能发生变化，
+        此方法根据设备当前关联的网关SN查找正确的MQTT处理器。
+        
+        Returns:
+            MQTT处理器实例
+        """
+        current_gateway_sn = self.get_current_gateway_sn()
+        if current_gateway_sn != self.gateway_sn:
+            for entry_id, data in self.hass.data[DOMAIN].items():
+                if isinstance(data, dict) and data.get("gateway_sn") == current_gateway_sn:
+                    if "mqtt_handler" in data:
+                        return data["mqtt_handler"]
+            _LOGGER.error("未找到设备 %s 关联的网关 %s 的MQTT处理器",
+                         self.device_sn, current_gateway_sn)
+            return self.mqtt_handler
+        return self.mqtt_handler
     
     async def async_added_to_hass(self) -> None:
         """实体添加到Home Assistant时调用"""

@@ -126,24 +126,8 @@ class BaseWindowControllerButton(WindowControllerBaseEntity, ButtonEntity):
     async def async_press(self) -> None:
         """按下按键，执行命令"""
         try:
-            # 使用基类方法获取当前关联的网关
-            current_gateway_sn = self.get_current_gateway_sn()
-            
-            # 如果设备关联的网关与当前网关不同，需要找到正确的mqtt_handler
-            if current_gateway_sn != self.gateway_sn:
-                # 查找与设备关联的网关的mqtt_handler
-                for entry_id, data in self.hass.data[DOMAIN].items():
-                    if isinstance(data, dict) and data.get("gateway_sn") == current_gateway_sn:
-                        if "mqtt_handler" in data:
-                            mqtt_handler = data["mqtt_handler"]
-                            await mqtt_handler.send_command(self.device_sn, self.command)
-                            _LOGGER.info("已触发设备 %s 的%s命令（通过网关 %s）", self.device_sn, self._attr_name, current_gateway_sn)
-                            return
-                _LOGGER.error("未找到设备 %s 关联的网关 %s 的MQTT处理器", self.device_sn, current_gateway_sn)
-            else:
-                # 使用当前mqtt_handler发送命令
-                await self.mqtt_handler.send_command(self.device_sn, self.command)
-                _LOGGER.info("已触发设备 %s 的%s命令", self.device_sn, self._attr_name)
+            await self._get_mqtt_handler().send_command(self.device_sn, self.command)
+            _LOGGER.info("已触发设备 %s 的%s命令", self.device_sn, self._attr_name)
         except Exception as e:
             _LOGGER.error("触发设备%s命令失败: %s", self._attr_name, e)
 

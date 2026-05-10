@@ -97,51 +97,24 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
     async def async_open_cover(self, **kwargs):
         """打开开窗器"""
         try:
-            current_gateway_sn = self.get_current_gateway_sn()
-            if current_gateway_sn != self.gateway_sn:
-                for entry_id, data in self.hass.data[DOMAIN].items():
-                    if isinstance(data, dict) and data.get("gateway_sn") == current_gateway_sn:
-                        if "mqtt_handler" in data:
-                            await data["mqtt_handler"].send_command(self.device_sn, COMMAND_OPEN)
-                            return
-                _LOGGER.error("未找到设备 %s 关联的网关 %s 的MQTT处理器", self.device_sn, current_gateway_sn)
-            else:
-                await self.mqtt_handler.send_command(self.device_sn, COMMAND_OPEN)
-                _LOGGER.info("Cover打开: %s", self.device_sn)
+            await self._get_mqtt_handler().send_command(self.device_sn, COMMAND_OPEN)
+            _LOGGER.info("Cover打开: %s", self.device_sn)
         except Exception as e:
             _LOGGER.error("Cover打开失败 %s: %s", self.device_sn, e)
 
     async def async_close_cover(self, **kwargs):
         """关闭开窗器"""
         try:
-            current_gateway_sn = self.get_current_gateway_sn()
-            if current_gateway_sn != self.gateway_sn:
-                for entry_id, data in self.hass.data[DOMAIN].items():
-                    if isinstance(data, dict) and data.get("gateway_sn") == current_gateway_sn:
-                        if "mqtt_handler" in data:
-                            await data["mqtt_handler"].send_command(self.device_sn, COMMAND_CLOSE)
-                            return
-                _LOGGER.error("未找到设备 %s 关联的网关 %s 的MQTT处理器", self.device_sn, current_gateway_sn)
-            else:
-                await self.mqtt_handler.send_command(self.device_sn, COMMAND_CLOSE)
-                _LOGGER.info("Cover关闭: %s", self.device_sn)
+            await self._get_mqtt_handler().send_command(self.device_sn, COMMAND_CLOSE)
+            _LOGGER.info("Cover关闭: %s", self.device_sn)
         except Exception as e:
             _LOGGER.error("Cover关闭失败 %s: %s", self.device_sn, e)
 
     async def async_stop_cover(self, **kwargs):
         """停止开窗器"""
         try:
-            current_gateway_sn = self.get_current_gateway_sn()
-            if current_gateway_sn != self.gateway_sn:
-                for entry_id, data in self.hass.data[DOMAIN].items():
-                    if isinstance(data, dict) and data.get("gateway_sn") == current_gateway_sn:
-                        if "mqtt_handler" in data:
-                            await data["mqtt_handler"].send_command(self.device_sn, COMMAND_STOP)
-                            return
-                _LOGGER.error("未找到设备 %s 关联的网关 %s 的MQTT处理器", self.device_sn, current_gateway_sn)
-            else:
-                await self.mqtt_handler.send_command(self.device_sn, COMMAND_STOP)
-                _LOGGER.info("Cover停止: %s", self.device_sn)
+            await self._get_mqtt_handler().send_command(self.device_sn, COMMAND_STOP)
+            _LOGGER.info("Cover停止: %s", self.device_sn)
         except Exception as e:
             _LOGGER.error("Cover停止失败 %s: %s", self.device_sn, e)
 
