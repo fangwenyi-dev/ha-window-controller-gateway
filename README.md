@@ -188,6 +188,22 @@ Home Assistant 自定义集成，用于控制慧尖开窗器网关及设备。
 
 ## 版本历史
 
+### v1.3.4
+- 优化: 迁移清理流程重构，`_cleanup_old_gateway` 移至 `async_remove` 前执行，设备注册清理与配置条目删除保证同步
+- 优化: 删除废弃方法 `migrate_devices_with_rollback` 和 `_verify_migration_result`，减少代码冗余
+- 修复: MQTT 重连时取消旧订阅，防止订阅泄漏
+- 修复: `entry_data` 覆盖问题，改为合并模式保留平台附加键
+- 修复: Cover 实体添加 `EntityCategory.CONFIG`，子设备 Cover 显示在单独配置框中
+- 修复: `safe_migrate_devices` 中 `delete_old_devices` 硬编码修复，与 `remove_old_gateway` 对齐
+- 修复: 配对手按钮 `send_command` 空参数问题
+- 修复: Config Flow 测试连接 MQTT 订阅泄漏问题
+- 修复: 传感器回调缺少 `async_write_ha_state()` 状态推送
+- 修复: 迁移传感器回调缺少处理器时记录警告
+- 修复: 网关停止事件监听器清理，`async_unload_entry` 中取消注册
+- 修复: MQTT 线程安全，`_processed_messages` 使用 `threading.Lock` 保护
+- 修复: SN 匹配改为精确匹配（split 方式替代 substring）
+- 修复: `button.py` 新增 `unique_id` 存在性检查，防止重复注册错误
+
 ### v1.3.3
 - 新增: Cover 实体添加 device_class=WINDOW，HA 识别为窗户类型，大模型 LLM 指令匹配更精准
 - 优化: const.py 全面重构，移除 12 个类包装和 141 行重复导出，代码量从 319 行精简至 122 行
