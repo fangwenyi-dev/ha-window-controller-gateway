@@ -25,6 +25,7 @@ from .const import (
     DEVICE_SETUP_DELAY,
     MIGRATION_DELAY
 )
+from .persist import save_persistent_data
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class WindowControllerDeviceManager:
     """设备管理器类"""
     
     # 需要重新创建的实体类型和平台映射
-    entity_recreate_platforms = ["button", "sensor", "binary_sensor"]
+    entity_recreate_platforms = ["button", "sensor", "binary_sensor", "cover"]
     
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
         """初始化设备管理器"""
@@ -51,6 +52,7 @@ class WindowControllerDeviceManager:
         self._migration_lock = asyncio.Lock()
         self._status_query_semaphore = asyncio.Semaphore(3)  # 同时最多3个状态查询
         self._manually_removed_devices = self._load_manually_removed_devices()
+        self._background_tasks = []
     
     def _load_manually_removed_devices(self) -> set:
         """从持久化存储中加载手动删除的设备SN列表"""
@@ -81,9 +83,7 @@ class WindowControllerDeviceManager:
     def _trigger_persistent_save(self) -> None:
         """触发持久化保存（异步）"""
         try:
-            import sys
-            from . import _save_persistent_data
-            self.hass.async_create_task(_save_persistent_data(self.hass))
+            self.hass.async_create_task(save_persistent_data(self.hass))
         except Exception as e:
             _LOGGER.warning("触发持久化保存失败: %s", e)
     
@@ -134,6 +134,22 @@ class WindowControllerDeviceManager:
             self._entity_registry_cache = async_get_entity_registry(self.hass)
         return self._entity_registry_cache
     
+    async def _notify_device_added_callbacks(self, device_sn: str, device_name: str, device_type: str) -> None:
+        """批量通知所有设备添加回调，使用 gather 控制并发"""
+        if not self._device_added_callbacks:
+            return
+        tasks = []
+        for callback in self._device_added_callbacks:
+            tasks.append(callback(device_sn, device_name, device_type))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _spawn_background_task(self, coro, name=None):
+        """创建受追踪的后台任务"""
+        task = asyncio.create_task(coro, name=name)
+        self._background_tasks.append(task)
+        return task
+
     async def setup(self) -> bool:
         """设置设备管理器"""
         start_time = time.time()
@@ -174,17 +190,14 @@ class WindowControllerDeviceManager:
                     _LOGGER.info("同步加载设备到内存: %s", device_sn)
                     
                     # 异步触发设备注册
-                    asyncio.create_task(
+                    self._spawn_background_task(
                         self._async_fast_register_device(device_sn, device_name)
                     )
                     
                     # 立即触发设备添加回调，确保实体被创建
-                    for callback in self._device_added_callbacks:
-                        try:
-                            self.hass.create_task(callback(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER))
-                            _LOGGER.debug("已触发设备 %s 的添加回调", device_sn)
-                        except Exception as e:
-                            _LOGGER.error("调用设备添加回调失败: %s", e)
+                    self._spawn_background_task(
+                        self._notify_device_added_callbacks(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER)
+                    )
                     
                     processed_count += 1
             
@@ -213,7 +226,8 @@ class WindowControllerDeviceManager:
                                 self.hass.create_task(callback(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER))
                             except Exception as e:
                                 _LOGGER.error("调用设备添加回调失败: %s", e)
-                        processed_count += 1
+                    # ← 这里第二个循环保持不变，是特殊情况
+                    processed_count += 1
                 if processed_count > 0:
                     self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING] = device_to_gateway_mapping
                     _LOGGER.info("映射表已更新并保存")
@@ -223,7 +237,7 @@ class WindowControllerDeviceManager:
         if processed_count > 0:
             _LOGGER.info("已加载 %d 个设备", processed_count)
             # 触发MQTT状态查询
-            asyncio.create_task(self._trigger_immediate_status_query())
+            self._spawn_background_task(self._trigger_immediate_status_query())
         
         # 2. 并行触发设备发现（后台任务）
         try:
@@ -240,7 +254,7 @@ class WindowControllerDeviceManager:
                         except Exception as e:
                             _LOGGER.debug("发送极速发现命令失败: %s", e)
                     
-                    asyncio.create_task(send_quick_discovery())
+                    self._spawn_background_task(send_quick_discovery())
         except Exception as e:
             _LOGGER.debug("触发并行设备发现失败: %s", e)
         
@@ -588,11 +602,7 @@ class WindowControllerDeviceManager:
                 
                 # 触发设备添加回调，确保实体被创建
                 # 注意：即使设备已存在，也需要触发回调，因为设备可能已经迁移到新网关
-                for callback in self._device_added_callbacks:
-                    try:
-                        self.hass.create_task(callback(device_sn, device_name_with_sn, device_type))
-                    except Exception as e:
-                        _LOGGER.error("调用设备添加回调失败: %s", e)
+                await self._notify_device_added_callbacks(device_sn, device_name_with_sn, device_type)
                 _LOGGER.info("已触发设备 %s 的添加回调（迁移模式）", device_sn)
                 
                 return device_sn
@@ -656,8 +666,7 @@ class WindowControllerDeviceManager:
                 _LOGGER.error("更新设备注册信息失败: %s", e)
             
             # 即使设备已存在，也要调用回调，确保实体被重新创建
-            for callback in self._device_added_callbacks:
-                self.hass.create_task(callback(device_sn, device_name_with_sn, device_type))
+            await self._notify_device_added_callbacks(device_sn, device_name_with_sn, device_type)
             _LOGGER.info("设备已存在，重新触发回调: %s", device_sn)
             return self.devices[device_sn]
             
@@ -687,11 +696,7 @@ class WindowControllerDeviceManager:
                 # 即使配置条目不存在，也要返回设备信息，这样设备仍会被添加到内存中
                 # 但不会创建Home Assistant设备注册
                 # 调用设备添加回调，让其他组件知道设备已添加
-                for callback in self._device_added_callbacks:
-                    try:
-                        self.hass.create_task(callback(device_sn, device_name_with_sn, device_type))
-                    except Exception as e:
-                        _LOGGER.error("调用设备添加回调失败: %s", e)
+                await self._notify_device_added_callbacks(device_sn, device_name_with_sn, device_type)
                 _LOGGER.debug("开窗器设备添加成功 (内存中): %s (%s)", device_name_with_sn, device_sn)
                 return device_sn
             
@@ -707,11 +712,7 @@ class WindowControllerDeviceManager:
             _LOGGER.error("创建设备注册失败: %s", e)
             # 即使创建设备注册失败，也要返回设备信息
             # 调用设备添加回调，让其他组件知道设备已添加
-            for callback in self._device_added_callbacks:
-                try:
-                    self.hass.create_task(callback(device_sn, device_name_with_sn, device_type))
-                except Exception as e:
-                    _LOGGER.error("调用设备添加回调失败: %s", e)
+            await self._notify_device_added_callbacks(device_sn, device_name_with_sn, device_type)
             _LOGGER.info("开窗器设备添加成功 (内存中): %s (%s)", device_name_with_sn, device_sn)
             return device_sn
         
@@ -731,23 +732,13 @@ class WindowControllerDeviceManager:
                 _LOGGER.info("设备 %s 已从手动删除列表中移除", device_sn)
             
             # 调用所有设备添加回调，通知需要添加新实体
-            for callback in self._device_added_callbacks:
-                try:
-                    self.hass.create_task(callback(device_sn, device_name_with_sn, device_type))
-                except Exception as e:
-                    _LOGGER.error("调用设备添加回调失败: %s", e)
+            await self._notify_device_added_callbacks(device_sn, device_name_with_sn, device_type)
             _LOGGER.debug("已通知所有设备添加回调: %s", device_name_with_sn)
             
             return device.id
         else:
             _LOGGER.error("创建设备失败，device 为 None: %s", device_sn)
-            # 即使创建设备失败，也要返回设备信息
-            # 调用设备添加回调，让其他组件知道设备已添加
-            for callback in self._device_added_callbacks:
-                try:
-                    self.hass.create_task(callback(device_sn, device_name_with_sn, device_type))
-                except Exception as e:
-                    _LOGGER.error("调用设备添加回调失败: %s", e)
+            await self._notify_device_added_callbacks(device_sn, device_name_with_sn, device_type)
             _LOGGER.info("开窗器设备添加成功 (内存中): %s (%s)", device_name_with_sn, device_sn)
             return device_sn
     
@@ -903,6 +894,11 @@ class WindowControllerDeviceManager:
     async def cleanup(self):
         """清理资源"""
         _LOGGER.info("清理设备管理器资源")
+        # 取消所有后台任务
+        for task in self._background_tasks:
+            if not task.done():
+                task.cancel()
+        self._background_tasks.clear()
         self.devices.clear()
         self._device_registry_cache = None
         # 更彻底的回调清理
@@ -1170,7 +1166,7 @@ class WindowControllerDeviceManager:
         return {"success": True, "message": "容量足够"}
     
     async def migrate_devices_with_rollback(self, old_gateway_sn, new_gateway_sn, delete_old_devices=False):
-        """带完整回滚保障的迁移"""
+        """带完整回滚保障的迁移"""  # TODO: 未使用的方法，考虑后续删除
         # 1. 创建完整快照
         snapshot = await self._create_migration_snapshot(old_gateway_sn)
         
@@ -1203,7 +1199,7 @@ class WindowControllerDeviceManager:
         return snapshot
     
     async def _verify_migration_result(self, old_gateway_sn, new_gateway_sn):
-        """验证迁移结果"""
+        """验证迁移结果"""  # TODO: 未使用的方法（仅被未使用的 migrate_devices_with_rollback 调用），考虑后续删除
         # 实现基本的迁移结果验证逻辑
         old_gateway_devices = await self._get_gateway_devices_from_registry(old_gateway_sn)
         new_gateway_devices = await self._get_gateway_devices_from_registry(new_gateway_sn)
@@ -1387,8 +1383,7 @@ class WindowControllerDeviceManager:
             
             if device:
                 # 触发设备添加回调
-                for callback in self._device_added_callbacks:
-                    self.hass.create_task(callback(device_sn, device.name, DEVICE_TYPE_WINDOW_OPENER))
+                await self._notify_device_added_callbacks(device_sn, device.name, DEVICE_TYPE_WINDOW_OPENER)
                 _LOGGER.info("已触发设备 %s 的添加回调（重新创建平台实体）", device_sn)
         
         # 等待设备添加回调执行完成 - 减少等待时间

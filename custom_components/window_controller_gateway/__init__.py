@@ -1,9 +1,7 @@
 """开窗器网关集成"""
 import logging
-import os
 import re
 import asyncio
-import json
 import voluptuous as vol
 from datetime import timedelta
 from typing import Any, Dict, Optional, Tuple
@@ -33,6 +31,7 @@ from .const import (
     POSITION_MAX,
     COMMAND_SET_POSITION
 )
+from .persist import load_persistent_data, save_persistent_data
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,59 +39,6 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SENSOR, Platform.
 
 # 发现平台名称
 DISCOVERY_PLATFORM = "window_controller_gateway"
-
-PERSISTENT_DATA_FILE = "window_controller_gateway_data.json"
-
-async def _load_persistent_data(hass: HomeAssistant) -> None:
-    """加载持久化的设备映射和手动删除列表"""
-    try:
-        config_dir = hass.config.config_dir
-        data_file = os.path.join(config_dir, PERSISTENT_DATA_FILE)
-        
-        if os.path.exists(data_file):
-            def _read_file():
-                with open(data_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            
-            data = await hass.async_add_executor_job(_read_file)
-            
-            if 'device_to_gateway_mapping' in data:
-                mapping = data['device_to_gateway_mapping']
-                hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING] = mapping
-                _LOGGER.info("已加载设备到网关映射表，共 %d 个设备", len(mapping))
-            
-            if 'manually_removed_devices' in data:
-                removed_set = set(data['manually_removed_devices'])
-                hass.data[DOMAIN][GLOBAL_MANUALLY_REMOVED_DEVICES] = removed_set
-                _LOGGER.info("已加载手动删除设备列表，共 %d 个设备", len(removed_set))
-                
-    except Exception as e:
-        _LOGGER.info("加载持久化数据失败: %s", e)
-
-async def _save_persistent_data(hass: HomeAssistant) -> None:
-    """保存设备映射和手动删除列表到持久化存储"""
-    try:
-        config_dir = hass.config.config_dir
-        data_file = os.path.join(config_dir, PERSISTENT_DATA_FILE)
-        
-        data = {
-            'device_to_gateway_mapping': hass.data[DOMAIN].get(DEVICE_TO_GATEWAY_MAPPING, {}),
-            'manually_removed_devices': list(hass.data[DOMAIN].get(GLOBAL_MANUALLY_REMOVED_DEVICES, set()))
-        }
-        
-        def _write_file():
-            import tempfile
-            tmp_file = data_file + ".tmp"
-            with open(tmp_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            os.replace(tmp_file, data_file)
-        
-        await hass.async_add_executor_job(_write_file)
-        
-        _LOGGER.debug("已保存持久化数据")
-        
-    except Exception as e:
-        _LOGGER.error("保存持久化数据失败: %s", e)
 
 async def _cleanup_duplicate_entities(hass: HomeAssistant, entry: ConfigEntry):
     """清理重复实体
@@ -143,7 +89,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
     hass.data[DOMAIN].setdefault(GLOBAL_MANUALLY_REMOVED_DEVICES, set())
     
     # 加载持久化数据
-    await _load_persistent_data(hass)
+    await load_persistent_data(hass)
     
     # 设置发现平台
     try:
@@ -663,7 +609,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _cleanup_duplicate_entities(hass, entry)
 
         # 监听HA停止事件
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _make_shutdown_handler(hass, entry))
+        entry_data["_stop_unsub"] = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _make_shutdown_handler(hass, entry))
 
         # 创建后台任务，延迟触发发现
         hass.async_create_task(_background_initialization(mqtt_handler), eager_start=True)
@@ -710,7 +656,18 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data = hass.data[DOMAIN][entry_id]
     unload_successful = True
 
-    # 1. 先停止所有定时任务和监听器
+    # 0. 保存持久化数据（在清理之前）
+    await save_persistent_data(hass)
+
+    # 1. 取消停止事件监听器
+    stop_unsub = data.get("_stop_unsub")
+    if stop_unsub:
+        try:
+            stop_unsub()
+        except Exception as e:
+            _LOGGER.debug("取消停止监听器时出错: %s", e)
+
+    # 2. 先停止所有定时任务和监听器
     for unsub in data.get("unsub_listeners", []):
         try:
             unsub()
@@ -781,6 +738,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     gateway_sn = entry.data.get(CONF_GATEWAY_SN, "unknown")
     _LOGGER.info("从配置中永久移除开窗器网关: %s", gateway_sn)
     
+    # 保存当前的持久化数据
+    await save_persistent_data(hass)
+    
     # 保留设备到网关映射表，以便重新添加网关时快速恢复设备
     # 不删除映射表，只是标记设备为未关联状态
     if DOMAIN in hass.data and DEVICE_TO_GATEWAY_MAPPING in hass.data[DOMAIN]:
@@ -833,7 +793,7 @@ def _make_shutdown_handler(hass, entry):
     """创建HA停止时的清理回调"""
     async def async_shutdown(event):
         _LOGGER.info("Home Assistant停止，保存持久化数据...")
-        await _save_persistent_data(hass)
+        await save_persistent_data(hass)
         _LOGGER.info("Home Assistant停止，清理网关资源...")
         await async_unload_entry(hass, entry)
     return async_shutdown

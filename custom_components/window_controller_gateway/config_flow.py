@@ -161,6 +161,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # 获取第一个已配置的网关信息或使用current_gateway_sn
             existing_gateway_sn = current_gateway_sn
             if not existing_gateway_sn and existing_entries:
+                if len(existing_entries) > 1:
+                    # 多个网关时，让用户选择替换哪个网关
+                    _LOGGER.info("存在多个已配置的网关（%d个），让用户选择替换哪个", len(existing_entries))
+                    self.context.update({
+                        "gateway_sn": gateway_sn,
+                        "gateway_name": gateway_name,
+                        "title_placeholders": {"name": gateway_name},
+                        "suggested_display_name": gateway_name,
+                        "source": "discovery",
+                        "replace_mode": replace_mode
+                    })
+                    return await self.async_step_replace()
                 existing_entry = existing_entries[0]
                 existing_gateway_sn = existing_entry.data.get(CONF_GATEWAY_SN)
             

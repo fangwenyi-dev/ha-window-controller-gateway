@@ -11,7 +11,6 @@ from homeassistant.components.cover import (
     CoverEntityFeature,
     CoverDeviceClass,
 )
-from homeassistant.helpers.entity import EntityCategory
 
 from .base_entity import WindowControllerBaseEntity
 from .const import (
@@ -57,7 +56,6 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
 
         self._attr_unique_id = f"{gateway_sn}_{device_sn}_cover"
         self._attr_device_class = CoverDeviceClass.WINDOW
-        self._attr_entity_category = EntityCategory.CONFIG
         self.entry_id = entry_id
         self._attr_supported_features = (
             CoverEntityFeature.OPEN |

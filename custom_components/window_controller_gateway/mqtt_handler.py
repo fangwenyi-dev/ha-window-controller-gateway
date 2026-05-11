@@ -3,6 +3,7 @@ import logging
 import json
 import asyncio
 import random
+import threading
 import weakref
 import time
 from datetime import datetime
@@ -56,6 +57,8 @@ class WindowControllerMQTTHandler:
         self.last_gateway_report_time = None  # 最后收到网关002上报的时间
         self.command_id = DEFAULT_COMMAND_ID  # 命令ID初始值
         self._check_task = None  # 后台任务引用
+        self._unsub_rsp = None  # MQTT 订阅取消函数
+        self._msg_lock = threading.Lock()  # 消息去重锁
         
         # MQTT主题定义 - 根据协议要求简化为两个主题
         self.TOPIC_GATEWAY_REQ = TOPIC_GATEWAY_REQ_FORMAT.format(gateway_sn=gateway_sn)  # 发送命令到网关
@@ -148,19 +151,20 @@ class WindowControllerMQTTHandler:
                     msg_key = f"{ctype}_{payload.get('id', 0)}_{response_sn}"
                     current_time = time.time()
                     
-                    # 清理过期的消息记录
-                    self._processed_messages = {
-                        k: v for k, v in self._processed_messages.items()
-                        if current_time - v < self._message_dedup_duration
-                    }
-                    
-                    # 如果消息已处理过，跳过
-                    if msg_key in self._processed_messages:
-                        _LOGGER.debug("跳过重复消息: %s", msg_key)
-                        return
-                    
-                    # 记录新消息
-                    self._processed_messages[msg_key] = current_time
+                    with self._msg_lock:
+                        # 清理过期的消息记录
+                        self._processed_messages = {
+                            k: v for k, v in self._processed_messages.items()
+                            if current_time - v < self._message_dedup_duration
+                        }
+                        
+                        # 如果消息已处理过，跳过
+                        if msg_key in self._processed_messages:
+                            _LOGGER.debug("跳过重复消息: %s", msg_key)
+                            return
+                        
+                        # 记录新消息
+                        self._processed_messages[msg_key] = current_time
                     
                     # 如果是来自未配置网关的消息，触发网关发现
                     if response_sn != self.gateway_sn:
@@ -261,7 +265,7 @@ class WindowControllerMQTTHandler:
         
         try:
             # 订阅网关响应主题
-            await mqtt.async_subscribe(self.hass, self.TOPIC_GATEWAY_RSP, handle_gateway_response, 1)
+            self._unsub_rsp = await mqtt.async_subscribe(self.hass, self.TOPIC_GATEWAY_RSP, handle_gateway_response, 1)
             _LOGGER.debug("订阅网关消息主题: %s", self.TOPIC_GATEWAY_RSP)
         except ConnectionError as e:
             _LOGGER.error("MQTT连接失败: %s", e)
@@ -814,6 +818,14 @@ class WindowControllerMQTTHandler:
             except Exception as e:
                 _LOGGER.debug("MQTT检查任务异常: %s", e)
             self._check_task = None
+        
+        # 取消 MQTT 订阅
+        if self._unsub_rsp:
+            try:
+                self._unsub_rsp()
+            except Exception as e:
+                _LOGGER.debug("取消MQTT订阅异常: %s", e)
+            self._unsub_rsp = None
         
         # 清理所有回调引用，避免内存泄漏
         self._status_callbacks.clear()

@@ -148,37 +148,11 @@ class GatewayPairingButton(ButtonEntity):
     async def async_press(self) -> None:
         """按下按键，触发配对模式"""
         try:
-            # 直接构建符合协议要求的配对命令，不检查连接状态
-            from homeassistant.components import mqtt
-            import json
-            
-            # 构建配对命令payload
-            payload = {
-                "head": PROTOCOL_HEAD,
-                "ctype": "003",
-                "id": self.mqtt_handler.command_id,
-                "data": {
-                    "bind": 1,
-                    "devtype": DEVICE_TYPE_CURTAIN_CTR,
-                    "sn": PAIRING_SN_PLACEHOLDER
-                },
-                "sn": self.gateway_sn,
-                "bind": 1
-            }
-            
-            # 递增命令ID
-            self.mqtt_handler.command_id += 1
-            if self.mqtt_handler.command_id > MAX_COMMAND_ID:
-                self.mqtt_handler.command_id = 1
-            
-            # 发送MQTT消息，不检查连接状态
-            await mqtt.async_publish(
-                self.hass,
-                self.mqtt_handler.TOPIC_GATEWAY_REQ,
-                json.dumps(payload),
-                1,
-                False
-            )
+            # 使用命令管理器发送，统一处理命令ID、连接检查等
+            success = await self.mqtt_handler.send_command("", "start_pairing")
+            if not success:
+                _LOGGER.error("发送配对命令失败")
+                return
             
             # 更新配对状态
             self.mqtt_handler.pairing_active = True

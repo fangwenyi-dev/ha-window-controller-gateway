@@ -107,18 +107,21 @@ def find_gateway_by_device_id(hass: Any, device_id: str) -> Tuple[Optional[Dict[
     for entry_id, data in hass.data[DOMAIN].items():
         if isinstance(data, dict):
             gateway_sn = data.get("gateway_sn", "")
-            if gateway_sn in device_id:
+            if gateway_sn and gateway_sn in device_id.split("_"):
                 return data, gateway_sn
             
             # 检查是否包含设备SN
             device_manager = data.get("device_manager")
             if device_manager:
                 devices = device_manager.get_all_devices()
+                id_parts = device_id.split("_")
                 for device in devices:
-                    if device.get("sn") in device_id:
+                    device_sn = device.get("sn", "")
+                    if device_sn in id_parts:
                         return data, gateway_sn
     
     return None, None
+
 
 def find_device_by_device_id(hass: Any, device_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str]]:
     """根据设备ID查找对应的设备和网关
@@ -139,8 +142,10 @@ def find_device_by_device_id(hass: Any, device_id: str) -> Tuple[Optional[Dict[s
             device_manager = data.get("device_manager")
             if device_manager:
                 devices = device_manager.get_all_devices()
+                id_parts = device_id.split("_")
                 for device in devices:
-                    if device.get("sn") in device_id:
+                    device_sn = device.get("sn", "")
+                    if device_sn in id_parts:
                         return device, data, data.get("gateway_sn", "")
 
     return None, None, None
