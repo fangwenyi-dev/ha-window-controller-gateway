@@ -317,7 +317,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             success, migrated_devices = await new_manager.safe_migrate_devices(
                 old_gateway_sn,
                 new_gateway_sn,
-                delete_old_devices=True  # 从旧网关删除设备
+                delete_old_devices=remove_old_gateway  # 与用户是否移除旧网关保持一致
             )
 
             if success:
