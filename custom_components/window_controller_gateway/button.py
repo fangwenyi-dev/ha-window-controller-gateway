@@ -245,9 +245,12 @@ async def async_setup_entry(
                 entry_data["created_remove_buttons"] = created_remove_buttons
                 _LOGGER.debug("为设备 %s 添加删除按钮", device_name)
             
-            # 为设备创建所有按钮
-            device_buttons = _create_device_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, str(entry.entry_id))
-            entities_to_add.extend(device_buttons)
+            # 检查设备按钮是否已存在（用 open 按钮作代表检查）
+            open_unique_id = f"{gateway_sn}_{device_sn}_open"
+            if not entity_registry.async_get_entity_id("button", DOMAIN, open_unique_id):
+                # 为设备创建所有按钮
+                device_buttons = _create_device_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, str(entry.entry_id))
+                entities_to_add.extend(device_buttons)
             
             # 只有当有实体需要添加时才调用async_add_entities
             if entities_to_add:
