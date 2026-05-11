@@ -129,6 +129,14 @@ class WindowControllerMQTTHandler:
     
     async def _subscribe_topics(self):
         """订阅MQTT主题 - 根据协议要求简化为只订阅网关响应主题"""
+        # 取消旧订阅（防止重连时累积重复订阅）
+        if self._unsub_rsp:
+            try:
+                self._unsub_rsp()
+            except Exception as e:
+                _LOGGER.debug("取消旧MQTT订阅时出错: %s", e)
+            self._unsub_rsp = None
+        
         # 订阅网关响应和数据主题
         def handle_gateway_response(msg):
             """处理网关响应和数据消息"""

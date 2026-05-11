@@ -607,7 +607,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "unsub_listeners": unsub_listeners,
             "_setup_complete": True
         }
-        hass.data[DOMAIN][entry.entry_id] = entry_data
+        # 合并已有数据（保留平台可能附加的键，如 created_remove_buttons）
+        previous = hass.data[DOMAIN].get(entry.entry_id, {})
+        previous.update(entry_data)
+        hass.data[DOMAIN][entry.entry_id] = previous
 
         # 设置平台（快速返回，不等待实体创建完成）
         _LOGGER.debug("正在设置前端平台组件...")
@@ -617,7 +620,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _cleanup_duplicate_entities(hass, entry)
 
         # 监听HA停止事件
-        entry_data["_stop_unsub"] = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _make_shutdown_handler(hass, entry))
+        hass.data[DOMAIN][entry.entry_id]["_stop_unsub"] = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _make_shutdown_handler(hass, entry))
 
         # 创建后台任务，延迟触发发现
         hass.async_create_task(_background_initialization(mqtt_handler), eager_start=True)
