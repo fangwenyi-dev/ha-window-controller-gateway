@@ -274,6 +274,10 @@ async def async_setup_entry(
                     if "status" in sensors_to_track:
                         mqtt_handler.add_status_callback(device_sn, sensors_to_track["status"].async_update)
                     _LOGGER.debug("为设备 %s 注册了状态更新回调", device_sn)
+                else:
+                    _LOGGER.warning("mqtt_handler 不可用，设备 %s 的传感器回调暂未注册", device_sn)
+            else:
+                _LOGGER.warning("entry_data (%s) 不可用，设备 %s 的传感器回调暂未注册", entry.entry_id, device_sn)
 
     # 定义设备移除回调函数
     async def on_device_removed(device_sn: str, device_name: str, device_type: str):
@@ -394,6 +398,10 @@ async def async_setup_entry(
                             status_sensor = sensors["status"]
                             mqtt_handler.add_status_callback(device_sn, status_sensor.async_update)
                     _LOGGER.info("传感器回调注册完成")
+                else:
+                    _LOGGER.warning("mqtt_handler 不可用，传感器回调暂未注册")
+            else:
+                _LOGGER.warning("entry_data (%s) 不可用，传感器回调暂未注册", entry.entry_id)
         except Exception as e:
             _LOGGER.error("传感器平台: 注册回调失败: %s", e, exc_info=True)
     else:

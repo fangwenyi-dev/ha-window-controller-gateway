@@ -1167,6 +1167,7 @@ class WindowControllerDeviceManager:
     
     async def migrate_devices_with_rollback(self, old_gateway_sn, new_gateway_sn, delete_old_devices=False):
         """带完整回滚保障的迁移"""  # TODO: 未使用的方法，考虑后续删除
+        _LOGGER.warning("调用了已废弃的方法 migrate_devices_with_rollback，当前未使用")
         # 1. 创建完整快照
         snapshot = await self._create_migration_snapshot(old_gateway_sn)
         
@@ -1200,6 +1201,7 @@ class WindowControllerDeviceManager:
     
     async def _verify_migration_result(self, old_gateway_sn, new_gateway_sn):
         """验证迁移结果"""  # TODO: 未使用的方法（仅被未使用的 migrate_devices_with_rollback 调用），考虑后续删除
+        _LOGGER.warning("调用了已废弃的方法 _verify_migration_result，当前未使用")
         # 实现基本的迁移结果验证逻辑
         old_gateway_devices = await self._get_gateway_devices_from_registry(old_gateway_sn)
         new_gateway_devices = await self._get_gateway_devices_from_registry(new_gateway_sn)

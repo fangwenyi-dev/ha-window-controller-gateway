@@ -631,7 +631,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             remove_old_gateway = migration_info.get("remove_old_gateway", False)
             _LOGGER.info("准备迁移设备，旧网关: %s, 新网关: %s, 是否移除旧网关: %s", old_gateway_sn, gateway_sn, remove_old_gateway)
             if old_gateway_sn and old_gateway_sn != gateway_sn:
-                hass.create_task(_migrate_devices_async(hass, old_gateway_sn, gateway_sn, True), name=f"{DOMAIN}_migrate_{entry.entry_id}")
+                hass.create_task(_migrate_devices_async(hass, old_gateway_sn, gateway_sn, remove_old_gateway), name=f"{DOMAIN}_migrate_{entry.entry_id}")
 
         _LOGGER.info("开窗器网关 [%s] 设置完成", gateway_name)
         return True
