@@ -149,7 +149,7 @@ class GatewayPairingButton(ButtonEntity):
         """按下按键，触发配对模式"""
         try:
             # 使用命令管理器发送，统一处理命令ID、连接检查等
-            success = await self.mqtt_handler.send_command("", "start_pairing")
+            success = await self.mqtt_handler.send_command(self.gateway_sn, "start_pairing")
             if not success:
                 _LOGGER.error("发送配对命令失败")
                 return

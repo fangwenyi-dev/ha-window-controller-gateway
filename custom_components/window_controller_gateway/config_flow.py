@@ -291,6 +291,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Test gateway connectivity"""
         _LOGGER.info("Testing gateway connectivity for SN: %s", gateway_sn)
 
+        mqtt_handler = None
         try:
             # Check if MQTT integration is available
             if not self.hass.data.get("mqtt"):
@@ -311,9 +312,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Give the gateway a moment to respond
             await asyncio.sleep(DEVICE_SETUP_DELAY)
 
-            # Cleanup
-            await mqtt_handler.cleanup()
-
             if connected:
                 _LOGGER.info("Gateway connectivity test passed")
             else:
@@ -324,6 +322,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except Exception as e:
             _LOGGER.error("Error testing gateway connectivity: %s", e)
             return False
+        finally:
+            if mqtt_handler:
+                try:
+                    await mqtt_handler.cleanup()
+                except Exception as cleanup_e:
+                    _LOGGER.debug("MQTT handler cleanup error: %s", cleanup_e)
 
     @staticmethod
     @callback

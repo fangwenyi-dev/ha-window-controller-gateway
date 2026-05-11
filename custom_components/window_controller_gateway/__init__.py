@@ -396,6 +396,13 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
                         _LOGGER.info("旧网关移除成功")
                     except Exception as remove_error:
                         _LOGGER.error("移除旧网关失败: %s", remove_error)
+                else:
+                    # 保留旧网关时，重载其平台以清理已迁移设备的旧实体
+                    try:
+                        _LOGGER.info("重载旧网关 %s 的平台，清理已迁移设备实体", old_gateway_sn)
+                        await hass.config_entries.async_reload(old_gateway_entry.entry_id)
+                    except Exception as reload_error:
+                        _LOGGER.warning("重载旧网关平台失败: %s", reload_error)
                 
                 # 发送迁移完成事件
                 hass.bus.async_fire(
@@ -592,7 +599,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         unsub_listeners.append(remove_interval)
 
         # 更新完整运行数据
-        hass.data[DOMAIN][entry.entry_id] = {
+        entry_data = {
             "gateway_sn": gateway_sn,
             "gateway_name": gateway_name,
             "device_manager": device_manager,
@@ -600,6 +607,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "unsub_listeners": unsub_listeners,
             "_setup_complete": True
         }
+        hass.data[DOMAIN][entry.entry_id] = entry_data
 
         # 设置平台（快速返回，不等待实体创建完成）
         _LOGGER.debug("正在设置前端平台组件...")
@@ -623,7 +631,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             remove_old_gateway = migration_info.get("remove_old_gateway", False)
             _LOGGER.info("准备迁移设备，旧网关: %s, 新网关: %s, 是否移除旧网关: %s", old_gateway_sn, gateway_sn, remove_old_gateway)
             if old_gateway_sn and old_gateway_sn != gateway_sn:
-                hass.create_task(_migrate_devices_async(hass, old_gateway_sn, gateway_sn, remove_old_gateway), name=f"{DOMAIN}_migrate_{entry.entry_id}")
+                hass.create_task(_migrate_devices_async(hass, old_gateway_sn, gateway_sn, True), name=f"{DOMAIN}_migrate_{entry.entry_id}")
 
         _LOGGER.info("开窗器网关 [%s] 设置完成", gateway_name)
         return True
