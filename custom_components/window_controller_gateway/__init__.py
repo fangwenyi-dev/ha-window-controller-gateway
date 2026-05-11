@@ -316,8 +316,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             # 使用安全迁移方法，支持旧网关不在线的情况
             success, migrated_devices = await new_manager.safe_migrate_devices(
                 old_gateway_sn,
-                new_gateway_sn,
-                delete_old_devices=remove_old_gateway  # 与用户是否移除旧网关保持一致
+                new_gateway_sn
             )
 
             if success:
@@ -392,6 +391,8 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
                             }
                         )
                         
+                        # 先清理旧网关的设备注册，再删除配置条目
+                        await old_manager._cleanup_old_gateway(old_gateway_sn)
                         await hass.config_entries.async_remove(old_gateway_entry.entry_id)
                         _LOGGER.info("旧网关移除成功")
                     except Exception as remove_error:

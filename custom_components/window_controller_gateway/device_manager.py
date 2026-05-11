@@ -1165,27 +1165,6 @@ class WindowControllerDeviceManager:
         # 这里可以实现检查网关容量的逻辑
         return {"success": True, "message": "容量足够"}
     
-    async def migrate_devices_with_rollback(self, old_gateway_sn, new_gateway_sn, delete_old_devices=False):
-        """带完整回滚保障的迁移"""  # TODO: 未使用的方法，考虑后续删除
-        _LOGGER.warning("调用了已废弃的方法 migrate_devices_with_rollback，当前未使用")
-        # 1. 创建完整快照
-        snapshot = await self._create_migration_snapshot(old_gateway_sn)
-        
-        # 2. 执行迁移
-        try:
-            result = await self.migrate_devices(old_gateway_sn, delete_old_devices)
-            
-            # 3. 验证迁移结果
-            if not await self._verify_migration_result(old_gateway_sn, new_gateway_sn):
-                raise Exception("迁移结果验证失败")
-                
-            return result
-        except Exception as e:
-            # 4. 执行回滚
-            _LOGGER.error("迁移失败，执行回滚: %s", e)
-            await self._rollback_migration(snapshot)
-            raise
-    
     async def _create_migration_snapshot(self, old_gateway_sn):
         """创建迁移快照"""
         # 创建包含更多信息的迁移快照
@@ -1198,27 +1177,6 @@ class WindowControllerDeviceManager:
         }
         _LOGGER.info("创建迁移快照，旧网关: %s，设备数: %d", old_gateway_sn, len(old_gateway_devices))
         return snapshot
-    
-    async def _verify_migration_result(self, old_gateway_sn, new_gateway_sn):
-        """验证迁移结果"""  # TODO: 未使用的方法（仅被未使用的 migrate_devices_with_rollback 调用），考虑后续删除
-        _LOGGER.warning("调用了已废弃的方法 _verify_migration_result，当前未使用")
-        # 实现基本的迁移结果验证逻辑
-        old_gateway_devices = await self._get_gateway_devices_from_registry(old_gateway_sn)
-        new_gateway_devices = await self._get_gateway_devices_from_registry(new_gateway_sn)
-        
-        _LOGGER.info("验证迁移结果，旧网关设备数: %d，新网关设备数: %d", 
-                   len(old_gateway_devices), len(new_gateway_devices))
-        
-        # 检查是否有设备成功迁移
-        if len(new_gateway_devices) == 0:
-            _LOGGER.error("验证失败: 新网关没有关联的设备")
-            return False
-        
-        # 检查设备数量是否合理
-        if len(new_gateway_devices) < len(old_gateway_devices):
-            _LOGGER.warning("验证警告: 新网关设备数少于旧网关")
-        
-        return True
     
     async def _transfer_entities_complete(self, old_gateway_sn: str, new_gateway_sn: str):
         """完整转移实体从旧网关到新网关"""
@@ -1641,7 +1599,7 @@ class WindowControllerDeviceManager:
         except Exception as e:
             _LOGGER.error("删除旧网关设备失败: %s", e)
     
-    async def safe_migrate_devices(self, old_gateway_sn, new_gateway_sn, delete_old_devices=False):
+    async def safe_migrate_devices(self, old_gateway_sn, new_gateway_sn):
         """安全的设备迁移流程（支持旧网关不在线）"""
         _LOGGER.info("开始安全迁移流程，旧网关: %s, 新网关: %s", old_gateway_sn, new_gateway_sn)
         
@@ -1675,10 +1633,6 @@ class WindowControllerDeviceManager:
             # 5.2 更新配置条目
             await self._update_config_entries(old_gateway_sn, new_gateway_sn)
             
-            # 6. 可选：清理旧网关
-            if delete_old_devices:
-                await self._cleanup_old_gateway(old_gateway_sn)
-                
             _LOGGER.info("安全迁移流程完成，成功迁移 %d 个设备", len(old_gateway_devices))
             return True, old_gateway_devices
             
