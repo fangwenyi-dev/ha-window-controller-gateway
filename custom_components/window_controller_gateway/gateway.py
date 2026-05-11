@@ -99,11 +99,11 @@ class GatewayOnlineSensor(BinarySensorEntity):
         except Exception as e:
             _LOGGER.error("更新网关状态失败: %s", e)
     
-    async def async_update(self):
+    async def async_update(self) -> None:
         """更新实体状态"""
         self._update_state()
-    
-    async def async_will_remove_from_hass(self):
+
+    async def async_will_remove_from_hass(self) -> None:
         """当实体从HA中移除时调用"""
         # 移除状态更新回调
         self.mqtt_handler.remove_status_callback(self._on_status_change)

@@ -1,319 +1,122 @@
-"""开窗器网关常量定义 - 完整最终版"""
+"""开窗器网关常量定义"""
+from typing import Final
 
-# 集成域
-DOMAIN = "window_controller_gateway"
+# ==================== 配置相关 ====================
+CONF_GATEWAY_SN: Final = "gateway_sn"
+CONF_GATEWAY_NAME: Final = "gateway_name"
+CONF_DEVICE_SN: Final = "device_sn"
+CONF_DEVICE_NAME: Final = "device_name"
+DEFAULT_GATEWAY_NAME: Final = "慧尖网关"
+CONF_DISCOVERY_INTERVAL: Final = "discovery_interval"
+CONF_AUTO_DISCOVERY: Final = "auto_discovery"
+CONF_DEBUG_LOGGING: Final = "debug_logging"
+DEFAULT_DISCOVERY_INTERVAL: Final = 300
+DEFAULT_AUTO_DISCOVERY: Final = True
+DEFAULT_DEBUG_LOGGING: Final = False
 
+# ==================== 服务相关 ====================
+SERVICE_START_PAIRING: Final = "start_pairing"
+SERVICE_REFRESH_DEVICES: Final = "refresh_devices"
+SERVICE_MIGRATE_DEVICES: Final = "migrate_devices"
 
-class ConfigConstants:
-    """配置相关常量"""
-    # 配置流常量
-    CONF_GATEWAY_SN = "gateway_sn"
-    CONF_GATEWAY_NAME = "gateway_name"
-    CONF_DEVICE_SN = "device_sn"
-    CONF_DEVICE_NAME = "device_name"
-    DEFAULT_GATEWAY_NAME = "慧尖网关"
-    
-    # 配置选项常量
-    CONF_DISCOVERY_INTERVAL = "discovery_interval"
-    CONF_AUTO_DISCOVERY = "auto_discovery"
-    CONF_DEBUG_LOGGING = "debug_logging"
-    
-    # 默认值
-    DEFAULT_DISCOVERY_INTERVAL = 300
-    DEFAULT_AUTO_DISCOVERY = True
-    DEFAULT_DEBUG_LOGGING = False
+# ==================== 属性相关 ====================
+ATTR_DEVICE_SN: Final = "device_sn"
+ATTR_DEVICE_NAME: Final = "device_name"
+ATTR_DEVICE_TYPE: Final = "device_type"
+ATTR_POSITION: Final = "position"
+ATTR_CURRENT_POSITION: Final = "current_position"
+ATTR_TARGET_POSITION: Final = "target_position"
+ATTR_BATTERY: Final = "battery"
+ATTR_VOLTAGE: Final = "voltage"
+POSITION_MIN: Final = 0
+POSITION_MAX: Final = 100
+SENSOR_TIMEOUT_MINUTES: Final = 15
 
+# ==================== 设备相关 ====================
+DEVICE_TYPE_WINDOW_OPENER: Final = "window_opener"
+DEVICE_TYPE_GATEWAY: Final = "gateway"
+MAX_DEVICES_PER_GATEWAY: Final = 32
+DEVICE_TO_GATEWAY_MAPPING: Final = "device_to_gateway_mapping"
+DEVICE_TO_GATEWAY_MAPPING_FILE: Final = "device_to_gateway_mapping.json"
+GLOBAL_MANUALLY_REMOVED_DEVICES: Final = "global_manually_removed_devices"
 
-class ServiceConstants:
-    """服务相关常量"""
-    SERVICE_START_PAIRING = "start_pairing"
-    SERVICE_REFRESH_DEVICES = "refresh_devices"
-    SERVICE_MIGRATE_DEVICES = "migrate_devices"
+# ==================== MQTT 相关 ====================
+DEFAULT_COMMAND_ID: Final = 1
+MAX_COMMAND_ID: Final = 999999
+GATEWAY_TIMEOUT_SECONDS: Final = 1800
+TOPIC_GATEWAY_REQ_FORMAT: Final = "gateway/{gateway_sn}/req"
+TOPIC_GATEWAY_RSP: Final = "gateway/rpt_rsp"
+MQTT_MAX_RETRIES: Final = 5
+MQTT_MIN_JITTER: Final = 0.5
+MQTT_MAX_JITTER: Final = 1.5
+MQTT_RETRY_DELAY_MAX: Final = 60
+MQTT_BATCH_SIZE: Final = 20
+PROTOCOL_HEAD: Final = "$SH"
+DEVICE_TYPE_CURTAIN_CTR: Final = "curtain_ctr"
+PAIRING_SN_PLACEHOLDER: Final = "FFFFFFFFFFFF"
+COMMAND_VALUE_OPEN: Final = "100"
+COMMAND_VALUE_CLOSE: Final = "0"
+COMMAND_VALUE_STOP: Final = "101"
+COMMAND_VALUE_TOGGLE: Final = "200"
+ATTRIBUTE_W_TRAVEL: Final = "w_travel"
 
+# ==================== 状态相关 ====================
+STATE_PAIRING: Final = "pairing"
+STATE_CONNECTED: Final = "connected"
+STATE_DISCONNECTED: Final = "disconnected"
+STATE_OPENING: Final = "opening"
+STATE_CLOSING: Final = "closing"
+STATE_STOPPED: Final = "stopped"
+STATE_OPEN: Final = "open"
+STATE_CLOSED: Final = "closed"
+STATE_UNKNOWN: Final = "unknown"
+GATEWAY_STATUS_ONLINE: Final = "online"
+GATEWAY_STATUS_OFFLINE: Final = "offline"
+GATEWAY_STATUS_PAIRING: Final = "pairing"
+PAIRING_STATUS_ACTIVE: Final = "active"
+PAIRING_STATUS_INACTIVE: Final = "inactive"
 
-class AttributeConstants:
-    """属性相关常量"""
-    ATTR_DEVICE_SN = "device_sn"
-    ATTR_DEVICE_NAME = "device_name"
-    ATTR_DEVICE_TYPE = "device_type"
-    ATTR_POSITION = "position"
-    ATTR_CURRENT_POSITION = "current_position"
-    ATTR_TARGET_POSITION = "target_position"
-    ATTR_BATTERY = "battery"
-    POSITION_MIN = 0
-    POSITION_MAX = 100
-    SENSOR_TIMEOUT_MINUTES = 15
-    ATTR_VOLTAGE = "voltage"
+# ==================== 错误代码相关 ====================
+ERROR_CODE_SUCCESS: Final = 0
+ERROR_CODE_BIND_EXISTS: Final = 7
 
+# ==================== 事件相关 ====================
+EVENT_DEVICE_DISCOVERED: Final = "window_controller_device_discovered"
+EVENT_DEVICE_UPDATED: Final = "window_controller_device_updated"
+EVENT_GATEWAY_CONNECTED: Final = "window_controller_gateway_connected"
+EVENT_GATEWAY_DISCONNECTED: Final = "window_controller_gateway_disconnected"
 
-class DeviceConstants:
-    """设备相关常量"""
-    # 设备类型常量
-    DEVICE_TYPE_WINDOW_OPENER = "window_opener"
-    DEVICE_TYPE_GATEWAY = "gateway"
-    
-    # 网关配置常量
-    MAX_DEVICES_PER_GATEWAY = 32  # 每个网关最多支持32个设备
-    
-    # 设备到网关映射表常量
-    DEVICE_TO_GATEWAY_MAPPING = "device_to_gateway_mapping"
-    DEVICE_TO_GATEWAY_MAPPING_FILE = "device_to_gateway_mapping.json"
-    
-    # 全局手动删除设备列表常量
-    GLOBAL_MANUALLY_REMOVED_DEVICES = "global_manually_removed_devices"
+# ==================== 命令相关 ====================
+COMMAND_OPEN: Final = "open"
+COMMAND_CLOSE: Final = "close"
+COMMAND_STOP: Final = "stop"
+COMMAND_SET_POSITION: Final = "set_position"
+COMMAND_A: Final = "a"
+COMMAND_PAIR: Final = "pair"
+COMMAND_DISCOVER: Final = "discover"
+COMMAND_STATUS: Final = "status"
+COMMAND_START_PAIRING: Final = "start_pairing"
 
+# ==================== 实体相关 ====================
+ENTITY_GATEWAY_PREFIX: Final = "gateway_"
+ENTITY_PAIRING_BUTTON_SUFFIX: Final = "_pair"
+ENTITY_ONLINE_SENSOR_SUFFIX: Final = "_online"
 
-class MqttConstants:
-    """MQTT相关常量"""
-    DEFAULT_COMMAND_ID = 1  # 命令ID初始值
-    MAX_COMMAND_ID = 999999  # 命令ID最大值（6位数字，足够使用）
-    GATEWAY_TIMEOUT_SECONDS = 1800  # 网关超时时间（30分钟）
-    TOPIC_GATEWAY_REQ_FORMAT = "gateway/{gateway_sn}/req"  # 发送命令到网关的主题格式
-    TOPIC_GATEWAY_RSP = "gateway/rpt_rsp"  # 接收网关数据和响应的主题
-    MQTT_MAX_RETRIES = 5  # MQTT最大重试次数
-    MQTT_MIN_JITTER = 0.5  # 最小抖动系数
-    MQTT_MAX_JITTER = 1.5  # 最大抖动系数
-    MQTT_RETRY_DELAY_MAX = 60  # 最大重试延迟（秒）
-    MQTT_BATCH_SIZE = 20  # 批处理大小
-    
-    # 协议相关常量
-    PROTOCOL_HEAD = "$SH"  # 协议头
-    DEVICE_TYPE_CURTAIN_CTR = "curtain_ctr"  # 开窗器设备类型
-    PAIRING_SN_PLACEHOLDER = "FFFFFFFFFFFF"  # 配对模式下的设备SN占位符
-    COMMAND_VALUE_OPEN = "100"  # 打开命令值
-    COMMAND_VALUE_CLOSE = "0"  # 关闭命令值
-    COMMAND_VALUE_STOP = "101"  # 停止命令值
-    COMMAND_VALUE_TOGGLE = "200"  # 切换命令值
-    ATTRIBUTE_W_TRAVEL = "w_travel"  # 行程属性
+# ==================== 时间相关（秒） ====================
+SCAN_INTERVAL: Final = 300
+SENSOR_SCAN_INTERVAL: Final = 10
+DEVICE_REGISTRATION_DELAY: Final = 0.5
+GATEWAY_READY_DELAY: Final = 1
+DEVICE_SETUP_DELAY: Final = 2
+GATEWAY_CHECK_INTERVAL: Final = 30
+INITIAL_RETRY_DELAY: Final = 5
+MIGRATION_DELAY: Final = 1
+RESTART_DELAY: Final = 1
+GATEWAY_PAIRING_TIMEOUT: Final = 60
 
-
-class StatusConstants:
-    """状态相关常量"""
-    # 状态常量
-    STATE_PAIRING = "pairing"
-    STATE_CONNECTED = "connected"
-    STATE_DISCONNECTED = "disconnected"
-    STATE_OPENING = "opening"
-    STATE_CLOSING = "closing"
-    STATE_STOPPED = "stopped"
-    STATE_OPEN = "open"
-    STATE_CLOSED = "closed"
-    STATE_UNKNOWN = "unknown"
-    
-    # 网关状态常量
-    GATEWAY_STATUS_ONLINE = "online"
-    GATEWAY_STATUS_OFFLINE = "offline"
-    GATEWAY_STATUS_PAIRING = "pairing"
-    
-    # 配对状态常量
-    PAIRING_STATUS_ACTIVE = "active"
-    PAIRING_STATUS_INACTIVE = "inactive"
-
-
-class ErrorConstants:
-    """错误代码相关常量"""
-    ERROR_CODE_SUCCESS = 0
-    ERROR_CODE_BIND_EXISTS = 7
-
-
-class EventConstants:
-    """事件相关常量"""
-    EVENT_DEVICE_DISCOVERED = "window_controller_device_discovered"
-    EVENT_DEVICE_UPDATED = "window_controller_device_updated"
-    EVENT_GATEWAY_CONNECTED = "window_controller_gateway_connected"
-    EVENT_GATEWAY_DISCONNECTED = "window_controller_gateway_disconnected"
-
-
-class CommandConstants:
-    """命令相关常量"""
-    COMMAND_OPEN = "open"
-    COMMAND_CLOSE = "close"
-    COMMAND_STOP = "stop"
-    COMMAND_SET_POSITION = "set_position"
-    COMMAND_A = "a"
-    COMMAND_PAIR = "pair"
-    COMMAND_DISCOVER = "discover"
-    COMMAND_STATUS = "status"
-    COMMAND_START_PAIRING = "start_pairing"
-
-
-class EntityConstants:
-    """实体相关常量"""
-    # 网关实体常量
-    ENTITY_GATEWAY_PREFIX = "gateway_"
-    ENTITY_PAIRING_BUTTON_SUFFIX = "_pair"
-    ENTITY_ONLINE_SENSOR_SUFFIX = "_online"
-
-
-class TimeConstants:
-    """时间相关常量"""
-    # 扫描间隔（秒）
-    SCAN_INTERVAL = 300
-    SENSOR_SCAN_INTERVAL = 10  # 传感器扫描间隔，提高更新频率
-    
-    # 延迟常量（秒）
-    DEVICE_REGISTRATION_DELAY = 0.5  # 设备注册延迟，让主流程先完成
-    GATEWAY_READY_DELAY = 1  # 网关就绪延迟
-    DEVICE_SETUP_DELAY = 2  # 设备设置延迟
-    GATEWAY_CHECK_INTERVAL = 30  # 网关检查间隔
-    INITIAL_RETRY_DELAY = 5  # 初始重试延迟
-    MIGRATION_DELAY = 1  # 迁移延迟
-    RESTART_DELAY = 1  # 重启延迟（减少以避免阻塞HA启动）
-    GATEWAY_PAIRING_TIMEOUT = 60  # 网关配对超时时间（秒）
-
-
-class OtherConstants:
-    """其他常量"""
-    # 其他常量
-    MANUFACTURER = "慧尖"
-    MODEL = "慧尖开窗器网关"
-    VERSION = "1.3.2"
-    
-    # 图标常量
-    ICON_GATEWAY = "mdi:gateway"
-    ICON_WINDOW_OPENER = "mdi:window-closed"
-
-
-# 为了保持向后兼容性，导出常用常量
-# 配置流常量
-CONF_GATEWAY_SN = ConfigConstants.CONF_GATEWAY_SN
-CONF_GATEWAY_NAME = ConfigConstants.CONF_GATEWAY_NAME
-CONF_DEVICE_SN = ConfigConstants.CONF_DEVICE_SN
-CONF_DEVICE_NAME = ConfigConstants.CONF_DEVICE_NAME
-DEFAULT_GATEWAY_NAME = ConfigConstants.DEFAULT_GATEWAY_NAME
-
-# 服务常量
-SERVICE_START_PAIRING = ServiceConstants.SERVICE_START_PAIRING
-SERVICE_REFRESH_DEVICES = ServiceConstants.SERVICE_REFRESH_DEVICES
-SERVICE_MIGRATE_DEVICES = ServiceConstants.SERVICE_MIGRATE_DEVICES
-
-# 属性常量
-ATTR_DEVICE_SN = AttributeConstants.ATTR_DEVICE_SN
-ATTR_DEVICE_NAME = AttributeConstants.ATTR_DEVICE_NAME
-ATTR_DEVICE_TYPE = AttributeConstants.ATTR_DEVICE_TYPE
-ATTR_POSITION = AttributeConstants.ATTR_POSITION
-ATTR_CURRENT_POSITION = AttributeConstants.ATTR_CURRENT_POSITION
-ATTR_TARGET_POSITION = AttributeConstants.ATTR_TARGET_POSITION
-ATTR_BATTERY = AttributeConstants.ATTR_BATTERY
-ATTR_VOLTAGE = AttributeConstants.ATTR_VOLTAGE
-
-POSITION_MIN = AttributeConstants.POSITION_MIN
-POSITION_MAX = AttributeConstants.POSITION_MAX
-SENSOR_TIMEOUT_MINUTES = AttributeConstants.SENSOR_TIMEOUT_MINUTES
-
-# 设备类型常量
-DEVICE_TYPE_WINDOW_OPENER = DeviceConstants.DEVICE_TYPE_WINDOW_OPENER
-DEVICE_TYPE_GATEWAY = DeviceConstants.DEVICE_TYPE_GATEWAY
-
-# 网关配置常量
-MAX_DEVICES_PER_GATEWAY = DeviceConstants.MAX_DEVICES_PER_GATEWAY
-
-# MQTT配置常量
-DEFAULT_COMMAND_ID = MqttConstants.DEFAULT_COMMAND_ID
-GATEWAY_TIMEOUT_SECONDS = MqttConstants.GATEWAY_TIMEOUT_SECONDS
-TOPIC_GATEWAY_REQ_FORMAT = MqttConstants.TOPIC_GATEWAY_REQ_FORMAT
-TOPIC_GATEWAY_RSP = MqttConstants.TOPIC_GATEWAY_RSP
-
-# 状态常量
-GATEWAY_STATUS_ONLINE = StatusConstants.GATEWAY_STATUS_ONLINE
-GATEWAY_STATUS_OFFLINE = StatusConstants.GATEWAY_STATUS_OFFLINE
-GATEWAY_STATUS_PAIRING = StatusConstants.GATEWAY_STATUS_PAIRING
-
-# 错误代码常量
-ERROR_CODE_SUCCESS = ErrorConstants.ERROR_CODE_SUCCESS
-ERROR_CODE_BIND_EXISTS = ErrorConstants.ERROR_CODE_BIND_EXISTS
-
-# 状态常量
-STATE_PAIRING = StatusConstants.STATE_PAIRING
-STATE_CONNECTED = StatusConstants.STATE_CONNECTED
-STATE_DISCONNECTED = StatusConstants.STATE_DISCONNECTED
-STATE_OPENING = StatusConstants.STATE_OPENING
-STATE_CLOSING = StatusConstants.STATE_CLOSING
-STATE_STOPPED = StatusConstants.STATE_STOPPED
-STATE_OPEN = StatusConstants.STATE_OPEN
-STATE_CLOSED = StatusConstants.STATE_CLOSED
-STATE_UNKNOWN = StatusConstants.STATE_UNKNOWN
-
-# 事件常量
-EVENT_DEVICE_DISCOVERED = EventConstants.EVENT_DEVICE_DISCOVERED
-EVENT_DEVICE_UPDATED = EventConstants.EVENT_DEVICE_UPDATED
-EVENT_GATEWAY_CONNECTED = EventConstants.EVENT_GATEWAY_CONNECTED
-EVENT_GATEWAY_DISCONNECTED = EventConstants.EVENT_GATEWAY_DISCONNECTED
-
-# 配置选项常量
-CONF_DISCOVERY_INTERVAL = ConfigConstants.CONF_DISCOVERY_INTERVAL
-CONF_AUTO_DISCOVERY = ConfigConstants.CONF_AUTO_DISCOVERY
-CONF_DEBUG_LOGGING = ConfigConstants.CONF_DEBUG_LOGGING
-
-# 默认值
-DEFAULT_DISCOVERY_INTERVAL = ConfigConstants.DEFAULT_DISCOVERY_INTERVAL
-DEFAULT_AUTO_DISCOVERY = ConfigConstants.DEFAULT_AUTO_DISCOVERY
-DEFAULT_DEBUG_LOGGING = ConfigConstants.DEFAULT_DEBUG_LOGGING
-
-# 扫描间隔（秒）
-SCAN_INTERVAL = TimeConstants.SCAN_INTERVAL
-SENSOR_SCAN_INTERVAL = TimeConstants.SENSOR_SCAN_INTERVAL
-
-# 延迟常量（秒）
-DEVICE_REGISTRATION_DELAY = TimeConstants.DEVICE_REGISTRATION_DELAY
-GATEWAY_READY_DELAY = TimeConstants.GATEWAY_READY_DELAY
-DEVICE_SETUP_DELAY = TimeConstants.DEVICE_SETUP_DELAY
-GATEWAY_CHECK_INTERVAL = TimeConstants.GATEWAY_CHECK_INTERVAL
-INITIAL_RETRY_DELAY = TimeConstants.INITIAL_RETRY_DELAY
-MIGRATION_DELAY = TimeConstants.MIGRATION_DELAY
-RESTART_DELAY = TimeConstants.RESTART_DELAY
-GATEWAY_PAIRING_TIMEOUT = TimeConstants.GATEWAY_PAIRING_TIMEOUT
-
-# MQTT常量
-MAX_COMMAND_ID = MqttConstants.MAX_COMMAND_ID
-MQTT_MAX_RETRIES = MqttConstants.MQTT_MAX_RETRIES
-MQTT_MIN_JITTER = MqttConstants.MQTT_MIN_JITTER
-MQTT_MAX_JITTER = MqttConstants.MQTT_MAX_JITTER
-MQTT_RETRY_DELAY_MAX = MqttConstants.MQTT_RETRY_DELAY_MAX
-MQTT_BATCH_SIZE = MqttConstants.MQTT_BATCH_SIZE
-
-# 协议相关常量
-PROTOCOL_HEAD = MqttConstants.PROTOCOL_HEAD
-DEVICE_TYPE_CURTAIN_CTR = MqttConstants.DEVICE_TYPE_CURTAIN_CTR
-PAIRING_SN_PLACEHOLDER = MqttConstants.PAIRING_SN_PLACEHOLDER
-COMMAND_VALUE_OPEN = MqttConstants.COMMAND_VALUE_OPEN
-COMMAND_VALUE_CLOSE = MqttConstants.COMMAND_VALUE_CLOSE
-COMMAND_VALUE_STOP = MqttConstants.COMMAND_VALUE_STOP
-COMMAND_VALUE_TOGGLE = MqttConstants.COMMAND_VALUE_TOGGLE
-ATTRIBUTE_W_TRAVEL = MqttConstants.ATTRIBUTE_W_TRAVEL
-
-# 命令常量
-COMMAND_OPEN = CommandConstants.COMMAND_OPEN
-COMMAND_CLOSE = CommandConstants.COMMAND_CLOSE
-COMMAND_STOP = CommandConstants.COMMAND_STOP
-COMMAND_SET_POSITION = CommandConstants.COMMAND_SET_POSITION
-COMMAND_A = CommandConstants.COMMAND_A
-COMMAND_PAIR = CommandConstants.COMMAND_PAIR
-COMMAND_DISCOVER = CommandConstants.COMMAND_DISCOVER
-COMMAND_STATUS = CommandConstants.COMMAND_STATUS
-COMMAND_START_PAIRING = CommandConstants.COMMAND_START_PAIRING
-
-# 网关实体常量
-ENTITY_GATEWAY_PREFIX = EntityConstants.ENTITY_GATEWAY_PREFIX
-ENTITY_PAIRING_BUTTON_SUFFIX = EntityConstants.ENTITY_PAIRING_BUTTON_SUFFIX
-ENTITY_ONLINE_SENSOR_SUFFIX = EntityConstants.ENTITY_ONLINE_SENSOR_SUFFIX
-
-# 设备到网关映射表常量
-DEVICE_TO_GATEWAY_MAPPING = DeviceConstants.DEVICE_TO_GATEWAY_MAPPING
-DEVICE_TO_GATEWAY_MAPPING_FILE = DeviceConstants.DEVICE_TO_GATEWAY_MAPPING_FILE
-
-# 全局手动删除设备列表常量
-GLOBAL_MANUALLY_REMOVED_DEVICES = DeviceConstants.GLOBAL_MANUALLY_REMOVED_DEVICES
-
-# 配对状态常量
-PAIRING_STATUS_ACTIVE = StatusConstants.PAIRING_STATUS_ACTIVE
-PAIRING_STATUS_INACTIVE = StatusConstants.PAIRING_STATUS_INACTIVE
-
-# 其他常量
-MANUFACTURER = OtherConstants.MANUFACTURER
-MODEL = OtherConstants.MODEL
-VERSION = OtherConstants.VERSION
-
-# 图标常量
-ICON_GATEWAY = OtherConstants.ICON_GATEWAY
-ICON_WINDOW_OPENER = OtherConstants.ICON_WINDOW_OPENER
+# ==================== 其他 ====================
+MANUFACTURER: Final = "慧尖"
+MODEL: Final = "慧尖开窗器网关"
+VERSION: Final = "1.3.2"
+ICON_GATEWAY: Final = "mdi:gateway"
+ICON_WINDOW_OPENER: Final = "mdi:window-closed"

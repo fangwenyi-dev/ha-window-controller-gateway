@@ -124,7 +124,6 @@ class WindowControllerDeviceManager:
     async def _get_device_registry(self):
         """获取设备注册表（带缓存）"""
         if not self._device_registry_cache:
-            from homeassistant.helpers.device_registry import async_get
             self._device_registry_cache = async_get(self.hass)
         return self._device_registry_cache
     
@@ -137,8 +136,6 @@ class WindowControllerDeviceManager:
     
     async def setup(self) -> bool:
         """设置设备管理器"""
-        import time
-        import asyncio
         start_time = time.time()
         _LOGGER.info("=== 设备管理器初始化: %s ===", self.gateway_sn)
         

@@ -94,7 +94,7 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
         """始终返回None，HA不知道位置，所以所有按钮都可点击"""
         return None
 
-    async def async_open_cover(self, **kwargs):
+    async def async_open_cover(self, **kwargs) -> None:
         """打开开窗器"""
         try:
             await self._get_mqtt_handler().send_command(self.device_sn, COMMAND_OPEN)
@@ -102,7 +102,7 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
         except Exception as e:
             _LOGGER.error("Cover打开失败 %s: %s", self.device_sn, e)
 
-    async def async_close_cover(self, **kwargs):
+    async def async_close_cover(self, **kwargs) -> None:
         """关闭开窗器"""
         try:
             await self._get_mqtt_handler().send_command(self.device_sn, COMMAND_CLOSE)
@@ -110,7 +110,7 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
         except Exception as e:
             _LOGGER.error("Cover关闭失败 %s: %s", self.device_sn, e)
 
-    async def async_stop_cover(self, **kwargs):
+    async def async_stop_cover(self, **kwargs) -> None:
         """停止开窗器"""
         try:
             await self._get_mqtt_handler().send_command(self.device_sn, COMMAND_STOP)

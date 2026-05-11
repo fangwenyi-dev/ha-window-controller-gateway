@@ -139,7 +139,6 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
     hass.data.setdefault(DOMAIN, {})
     
     # 初始化全局设备到网关映射表
-    from .const import DEVICE_TO_GATEWAY_MAPPING, GLOBAL_MANUALLY_REMOVED_DEVICES
     hass.data[DOMAIN].setdefault(DEVICE_TO_GATEWAY_MAPPING, {})
     hass.data[DOMAIN].setdefault(GLOBAL_MANUALLY_REMOVED_DEVICES, set())
     
@@ -563,7 +562,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info("=== 开始设置配置条目: %s, gateway: %s ===", entry.entry_id, gateway_sn)
     
     # 检查持久化数据是否已加载
-    from .const import DEVICE_TO_GATEWAY_MAPPING
     if DEVICE_TO_GATEWAY_MAPPING in hass.data[DOMAIN]:
         mapping = hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
         _LOGGER.info("持久化映射表已加载: %s", mapping)
@@ -643,7 +641,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception as e:
                 _LOGGER.warning("定期连接检查时出错: %s", e)
 
-        remove_interval = async_track_time_interval(hass, periodic_update, timedelta(seconds=discovery_interval))
+        seconds = discovery_interval.total_seconds() if isinstance(discovery_interval, timedelta) else discovery_interval
+        remove_interval = async_track_time_interval(hass, periodic_update, timedelta(seconds=seconds))
         unsub_listeners.append(remove_interval)
 
         # 更新完整运行数据
@@ -664,32 +663,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _cleanup_duplicate_entities(hass, entry)
 
         # 监听HA停止事件
-        async def async_shutdown(event):
-            _LOGGER.info("Home Assistant停止，保存持久化数据...")
-            await _save_persistent_data(hass)
-            _LOGGER.info("Home Assistant停止，清理网关资源...")
-            await async_unload_entry(hass, entry)
-
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, async_shutdown)
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _make_shutdown_handler(hass, entry))
 
         # 创建后台任务，延迟触发发现
-        async def background_initialization():
-            """后台初始化任务，不阻塞主流程"""
-            try:
-                # 短暂延迟后执行发现
-                await asyncio.sleep(0.5)
-                # 设备已在前面加载完成，这里只触发快速发现
-                _LOGGER.debug("后台任务：正在触发快速设备发现...")
-                asyncio.create_task(mqtt_handler.fast_discovery())
-                _LOGGER.debug("后台任务：初始化完成")
-            except Exception as e:
-                _LOGGER.warning("后台初始化任务出错: %s", e)
-
-        # 创建后台任务，不等待完成（使用eager_start确保不阻塞HA启动）
-        hass.async_create_task(background_initialization(), eager_start=True)
+        hass.async_create_task(_background_initialization(mqtt_handler), eager_start=True)
 
         # 检查是否需要执行设备迁移（替换网关流程）
-        # 从数据中获取迁移信息
         _LOGGER.info("检查是否需要执行设备迁移，entry.data: %s", entry.data)
         migration_info = entry.data.get("migration_info")
         _LOGGER.info("迁移信息: %s", migration_info)
@@ -698,36 +677,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             remove_old_gateway = migration_info.get("remove_old_gateway", False)
             _LOGGER.info("准备迁移设备，旧网关: %s, 新网关: %s, 是否移除旧网关: %s", old_gateway_sn, gateway_sn, remove_old_gateway)
             if old_gateway_sn and old_gateway_sn != gateway_sn:
-                # 创建后台任务执行迁移
-                async def migrate_devices_async():
-                    """异步执行设备迁移"""
-                    try:
-                        _LOGGER.info("开始异步设备迁移，旧网关: %s, 新网关: %s", old_gateway_sn, gateway_sn)
-                        
-                        # 等待一段时间，确保新网关完全初始化
-                        _LOGGER.info("等待5秒，确保新网关完全初始化和设备发现完成...")
-                        await asyncio.sleep(RESTART_DELAY)
-                        
-                        # 调用迁移服务
-                        _LOGGER.info("调用迁移服务...")
-                        await hass.services.async_call(
-                            DOMAIN,
-                            "migrate_devices",
-                            {
-                                "old_gateway_sn": old_gateway_sn,
-                                "new_gateway_sn": gateway_sn,
-                                "remove_old_gateway": remove_old_gateway
-                            },
-                            blocking=True
-                        )
-                        
-                        _LOGGER.info("设备迁移任务已提交并完成")
-                    except Exception as e:
-                        _LOGGER.error("异步执行设备迁移失败: %s", e, exc_info=True)
-                
-                # 创建迁移任务，不等待完成
-                _LOGGER.info("创建迁移后台任务...")
-                hass.create_task(migrate_devices_async(), name=f"{DOMAIN}_migrate_{entry.entry_id}")
+                hass.create_task(_migrate_devices_async(hass, old_gateway_sn, gateway_sn, remove_old_gateway), name=f"{DOMAIN}_migrate_{entry.entry_id}")
 
         _LOGGER.info("开窗器网关 [%s] 设置完成", gateway_name)
         return True
@@ -845,3 +795,45 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         # 不从映射表中移除这些设备，而是保留映射关系
         # 这样重新添加网关时可以快速恢复设备
         _LOGGER.info("保留 %d 个设备的映射关系，以便快速恢复", len(devices_to_remove))
+
+
+async def _background_initialization(mqtt_handler):
+    """后台初始化任务，不阻塞主流程"""
+    try:
+        await asyncio.sleep(0.5)
+        _LOGGER.debug("后台任务：正在触发快速设备发现...")
+        asyncio.create_task(mqtt_handler.fast_discovery())
+        _LOGGER.debug("后台任务：初始化完成")
+    except Exception as e:
+        _LOGGER.warning("后台初始化任务出错: %s", e)
+
+
+async def _migrate_devices_async(hass, old_gateway_sn, gateway_sn, remove_old_gateway):
+    """异步执行设备迁移"""
+    try:
+        _LOGGER.info("开始异步设备迁移，旧网关: %s, 新网关: %s", old_gateway_sn, gateway_sn)
+        await asyncio.sleep(RESTART_DELAY)
+        _LOGGER.info("调用迁移服务...")
+        await hass.services.async_call(
+            DOMAIN,
+            "migrate_devices",
+            {
+                "old_gateway_sn": old_gateway_sn,
+                "new_gateway_sn": gateway_sn,
+                "remove_old_gateway": remove_old_gateway
+            },
+            blocking=True
+        )
+        _LOGGER.info("设备迁移任务已提交并完成")
+    except Exception as e:
+        _LOGGER.error("异步执行设备迁移失败: %s", e, exc_info=True)
+
+
+def _make_shutdown_handler(hass, entry):
+    """创建HA停止时的清理回调"""
+    async def async_shutdown(event):
+        _LOGGER.info("Home Assistant停止，保存持久化数据...")
+        await _save_persistent_data(hass)
+        _LOGGER.info("Home Assistant停止，清理网关资源...")
+        await async_unload_entry(hass, entry)
+    return async_shutdown

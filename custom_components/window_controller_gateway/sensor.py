@@ -10,7 +10,7 @@ from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from .const import (
     DOMAIN,
@@ -80,8 +80,6 @@ class WindowControllerBatterySensor(WindowControllerBaseEntity, SensorEntity):
     
     def _update_state(self):
         """从设备管理器更新状态"""
-        from datetime import datetime, timedelta
-        
         device = self.device_manager.get_device(self.device_sn)
         if device:
             attributes = device.get("attributes", {})
@@ -101,7 +99,7 @@ class WindowControllerBatterySensor(WindowControllerBaseEntity, SensorEntity):
         """返回单位 - 确保即使状态为None时也返回正确的单位"""
         return "V"
     
-    async def async_update(self):
+    async def async_update(self) -> None:
         """更新实体状态"""
         self._update_state()
 
@@ -150,8 +148,6 @@ class WindowControllerStatusSensor(SensorEntity):
     
     def _update_state(self):
         """从设备管理器更新状态"""
-        from datetime import datetime, timedelta
-        
         device = self.device_manager.get_device(self.device_sn)
         if device:
             # 优先使用设备状态
@@ -173,8 +169,8 @@ class WindowControllerStatusSensor(SensorEntity):
         # 检查是否超过15分钟没有更新
         if self.last_update_time and (datetime.now() - self.last_update_time) > timedelta(minutes=15):
             self._attr_native_value = None
-    
-    async def async_update(self):
+
+    async def async_update(self) -> None:
         """更新实体状态"""
         self._update_state()
 
