@@ -1,6 +1,9 @@
 """开窗器网关常量定义"""
 from typing import Final
 
+# ==================== 集成域 ====================
+DOMAIN: Final = "window_controller_gateway"
+
 # ==================== 配置相关 ====================
 CONF_GATEWAY_SN: Final = "gateway_sn"
 CONF_GATEWAY_NAME: Final = "gateway_name"
@@ -37,7 +40,7 @@ DEVICE_TYPE_WINDOW_OPENER: Final = "window_opener"
 DEVICE_TYPE_GATEWAY: Final = "gateway"
 MAX_DEVICES_PER_GATEWAY: Final = 32
 DEVICE_TO_GATEWAY_MAPPING: Final = "device_to_gateway_mapping"
-DEVICE_TO_GATEWAY_MAPPING_FILE: Final = "device_to_gateway_mapping.json"
+DEVICE_TO_GATEWAY_MAPPING_FILE: Final = "device_gateway_mapping.json"
 GLOBAL_MANUALLY_REMOVED_DEVICES: Final = "global_manually_removed_devices"
 
 # ==================== MQTT 相关 ====================
