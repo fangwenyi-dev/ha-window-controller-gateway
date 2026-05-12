@@ -211,7 +211,7 @@ class GatewayDeviceRemoveButton(ButtonEntity):
         self.device_sn = device_sn
         self.device_name = device_name
         self.entry_id = entry_id
-        self._attr_name = f"{device_sn[-4:]} 删除"
+        self._attr_name = f"移除 {device_sn[-4:]}"
         # unique_id基于网关SN和设备SN，确保同一网关的同一设备只有一个删除按钮
         self._attr_unique_id = f"{gateway_sn}_remove_{device_sn}"
         # 添加图标

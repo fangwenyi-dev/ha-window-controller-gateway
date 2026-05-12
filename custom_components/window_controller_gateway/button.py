@@ -49,7 +49,7 @@ def _create_device_buttons(hass, device_manager, mqtt_handler, gateway_sn, devic
         ("open", "开启", "mdi:window-open", COMMAND_OPEN),
         ("stop", "暂停", "mdi:pause", COMMAND_STOP),
         ("close", "关闭", "mdi:window-closed", COMMAND_CLOSE),
-        ("a", "A", "mdi:alpha-a", COMMAND_A)
+        ("a", "内倒", "mdi:rotate-3d-variant", COMMAND_A)
     ]
     
     # 直接创建所有按钮，不检查实体是否存在

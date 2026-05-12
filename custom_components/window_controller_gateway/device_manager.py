@@ -909,6 +909,24 @@ class WindowControllerDeviceManager:
                     )
                     break
 
+        # 同步更新按钮别名（供语音集成精确匹配）
+        from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+
+        entity_registry = async_get_entity_registry(self.hass)
+        button_name_map = {"open": "开启", "stop": "暂停", "close": "关闭", "a": "内倒"}
+        for button_type, button_name in button_name_map.items():
+            unique_id = f"{self.gateway_sn}_{device_sn}_{button_type}"
+            entity_id = entity_registry.async_get_entity_id("button", DOMAIN, unique_id)
+            if entity_id:
+                entity_registry.async_update_entity(
+                    entity_id,
+                    aliases={f"{new_name} {button_name}"}
+                )
+                _LOGGER.debug(
+                    "已更新设备 %s 的 %s 按钮别名: %s",
+                    device_sn, button_name, f"{new_name} {button_name}"
+                )
+
         self._trigger_persistent_save()
         _LOGGER.info("设备 %s 重命名成功: %s → %s", device_sn, old_name, new_name)
         return True
