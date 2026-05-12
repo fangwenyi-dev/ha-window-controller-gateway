@@ -8,87 +8,22 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
-class EntityRegistryCacheManager:
-    """实体注册表缓存管理器"""
-    
-    # 类属性，存储单例实例
-    _instance = None
-    
-    def __new__(cls):
-        """单例模式"""
-        if cls._instance is None:
-            cls._instance = super(EntityRegistryCacheManager, cls).__new__(cls)
-            # 初始化实例属性
-            cls._instance._cache = {}
-            import threading
-            cls._instance._lock = threading.RLock()
-        return cls._instance
-    
-    def get_entity_registry(self, hass: HomeAssistant):
-        """获取实体注册表（带缓存）
-        
-        Args:
-            hass: Home Assistant实例
-        
-        Returns:
-            EntityRegistry: 实体注册表
-        """
-        with self._lock:
-            if hass not in self._cache:
-                from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
-                self._cache[hass] = async_get_entity_registry(hass)
-            return self._cache[hass]
-    
-    def clear_cache(self, hass: HomeAssistant = None):
-        """清理缓存
-        
-        Args:
-            hass: Home Assistant实例，如果为None则清理所有缓存
-        """
-        with self._lock:
-            if hass is None:
-                self._cache.clear()
-                _LOGGER.debug("所有实体注册表缓存已清理")
-            elif hass in self._cache:
-                del self._cache[hass]
-                _LOGGER.debug("实体注册表缓存已清理")
-    
-    def has_cache(self, hass: HomeAssistant) -> bool:
-        """检查是否有缓存
-        
-        Args:
-            hass: Home Assistant实例
-        
-        Returns:
-            bool: 是否有缓存
-        """
-        with self._lock:
-            return hass in self._cache
-
-
-# 创建全局实例
-entity_registry_cache_manager = EntityRegistryCacheManager()
-
-
 def get_entity_registry(hass: HomeAssistant):
-    """获取实体注册表（带缓存）
-    
+    """获取实体注册表
+
     Args:
         hass: Home Assistant实例
-    
+
     Returns:
         EntityRegistry: 实体注册表
     """
-    return entity_registry_cache_manager.get_entity_registry(hass)
+    from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+    return async_get_entity_registry(hass)
 
 
-def clear_entity_registry_cache(hass: HomeAssistant = None):
-    """清理实体注册表缓存
-    
-    Args:
-        hass: Home Assistant实例，如果为None则清理所有缓存
-    """
-    entity_registry_cache_manager.clear_cache(hass)
+def clear_entity_registry_cache(hass=None):
+    """清理实体注册表缓存（兼容接口，实际不再需要缓存管理）"""
+    pass
 
 def find_gateway_by_device_id(hass: Any, device_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """根据设备ID查找对应的网关

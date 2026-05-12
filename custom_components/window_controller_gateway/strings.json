@@ -47,6 +47,10 @@
       "name": "检查网关状态",
       "description": "检查网关的在线状态和连接情况"
     },
+    "rename_device": {
+      "name": "重命名设备",
+      "description": "重命名子设备名称，支持自定义房间/位置名称"
+    },
     "migrate_devices": {
       "name": "迁移设备",
       "description": "将子设备从旧网关迁移到新网关"

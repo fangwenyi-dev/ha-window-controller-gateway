@@ -105,10 +105,8 @@ class WindowControllerBatterySensor(WindowControllerBaseEntity, SensorEntity):
         self.async_write_ha_state()
 
 
-class WindowControllerStatusSensor(SensorEntity):
+class WindowControllerStatusSensor(WindowControllerBaseEntity, SensorEntity):
     """开窗器状态传感器"""
-    
-    _attr_has_entity_name = True
     
     def __init__(
         self,
@@ -120,11 +118,14 @@ class WindowControllerStatusSensor(SensorEntity):
         entry_id: str = None
     ):
         """初始化状态传感器"""
-        self.hass = hass
-        self.device_manager = device_manager
-        self.gateway_sn = gateway_sn
-        self.device_sn = device_sn
-        self._device_name = device_name
+        super().__init__(
+            hass=hass,
+            device_manager=device_manager,
+            mqtt_handler=None,
+            gateway_sn=gateway_sn,
+            device_sn=device_sn,
+            device_name=device_name
+        )
         self.entry_id = entry_id
         self._attr_name = "状态"
         # unique_id 基于设备SN，与v1.1.8保持一致
@@ -142,7 +143,7 @@ class WindowControllerStatusSensor(SensorEntity):
         """返回设备信息"""
         return DeviceInfo(
             identifiers={(DOMAIN, self.device_sn)},
-            name=self._device_name,
+            name=self.device_name,
             manufacturer=MANUFACTURER,
             model="开窗器"
         )

@@ -21,10 +21,12 @@ DEFAULT_DEBUG_LOGGING: Final = False
 SERVICE_START_PAIRING: Final = "start_pairing"
 SERVICE_REFRESH_DEVICES: Final = "refresh_devices"
 SERVICE_MIGRATE_DEVICES: Final = "migrate_devices"
+SERVICE_RENAME_DEVICE: Final = "rename_device"
 
 # ==================== 属性相关 ====================
 ATTR_DEVICE_SN: Final = "device_sn"
 ATTR_DEVICE_NAME: Final = "device_name"
+ATTR_NEW_NAME: Final = "name"
 ATTR_DEVICE_TYPE: Final = "device_type"
 ATTR_POSITION: Final = "position"
 ATTR_CURRENT_POSITION: Final = "current_position"

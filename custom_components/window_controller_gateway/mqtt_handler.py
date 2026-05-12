@@ -703,35 +703,6 @@ class WindowControllerMQTTHandler:
         
         return self.connected
     
-    async def start_pairing(self, duration: int = 60):
-        """开始配对 - 使用协议类型003"""
-        # 使用send_command方法发送符合协议要求的配对命令
-        await self.send_command(
-            self.gateway_sn,  # 使用网关SN作为设备SN
-            "start_pairing"
-            # 配对命令不需要duration参数
-        )
-        
-        # 更新配对状态
-        self.pairing_active = True
-        self._notify_status_change()
-        
-        self._schedule_async_task(
-            self.device_manager.update_gateway_status("pairing")
-        )
-        
-        _LOGGER.info("配对命令已发送，持续时间: %d秒", duration)
-        
-        async def pairing_timeout():
-            self.pairing_active = False
-            self._notify_status_change()
-            self._schedule_async_task(
-                self.device_manager.update_gateway_status("online" if self.connected else "offline")
-            )
-            _LOGGER.info("配对模式已超时，恢复正常状态")
-        
-        self.hass.loop.call_later(duration, lambda: self._schedule_async_task(pairing_timeout()))
-    
     async def unbind_device(self, device_sn: str):
         """解绑设备 - 使用协议类型003，bind=0"""
         # 构建符合协议要求的解绑命令
@@ -1116,22 +1087,15 @@ class WindowControllerMQTTHandler:
         
         if errcode == 0 and device_sn:
             # 绑定成功，添加设备
-            # 检查设备是否已经添加到其他网关中
-            if DEVICE_TO_GATEWAY_MAPPING in self.hass.data[DOMAIN]:
-                device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
-                if device_sn in device_to_gateway_mapping:
-                    existing_gateway_sn = device_to_gateway_mapping[device_sn]
-                    if existing_gateway_sn != self.gateway_sn:
-                        _LOGGER.warning("设备 %s 已经添加到网关 %s 中，不允许添加到当前网关 %s", 
-                                     device_sn, existing_gateway_sn, self.gateway_sn)
-                        return
-            
             # 计算设备序号，从01开始
             device_count = len(self.device_manager.get_all_devices())
             device_number = device_count + 1
             device_name = f"开窗器 {device_number:02d}"
             # 手动配对时使用 is_manual_pairing=True，跳过手动删除列表检查
             await self.device_manager.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER, is_manual_pairing=True)
+            # 配对成功后立即退出配对模式，UI 可以立刻从"配对中"恢复
+            self.pairing_active = False
+            self._notify_status_change()
             _LOGGER.info("设备绑定成功: %s, 名称: %s", device_sn, device_name)
         else:
             # 错误码7可能表示通讯距离不够，不记录为错误

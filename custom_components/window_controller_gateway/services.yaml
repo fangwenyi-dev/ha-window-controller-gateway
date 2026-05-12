@@ -67,6 +67,25 @@ check_gateway_status:
       selector:
         text:
 
+rename_device:
+  name: 重命名设备
+  description: 重命名子设备名称，支持自定义房间/位置名称
+  fields:
+    device_id:
+      name: 设备ID
+      description: 子设备的唯一标识符
+      required: true
+      example: "100121501186"
+      selector:
+        text:
+    name:
+      name: 新名称
+      description: 设备的新名称（如"客厅窗户"）
+      required: true
+      example: "客厅窗户"
+      selector:
+        text:
+
 migrate_devices:
   name: 迁移设备
   description: 将子设备从旧网关迁移到新网关

@@ -163,12 +163,12 @@ class WindowControllerDeviceManager:
         # 调试：检查映射表是否存在
         if DEVICE_TO_GATEWAY_MAPPING in self.hass.data[DOMAIN]:
             device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
-            _LOGGER.info("设备映射表内容: %s", device_to_gateway_mapping)
+            _LOGGER.debug("设备映射表内容: %s", device_to_gateway_mapping)
             
             # 遍历映射表，加载属于当前网关的设备（忽略大小写）
             for device_sn, mapped_gateway_sn in device_to_gateway_mapping.items():
                 # 标准化比较 - 支持多种匹配方式
-                _LOGGER.info("检查设备映射: device_sn=%s, mapped_gateway=%s, current_gateway=%s", device_sn, mapped_gateway_sn, self.gateway_sn)
+                _LOGGER.debug("检查设备映射: device_sn=%s, mapped_gateway=%s, current_gateway=%s", device_sn, mapped_gateway_sn, self.gateway_sn)
                 
                 # 当前网关SN
                 current_lower = self.gateway_sn.lower()
@@ -192,11 +192,6 @@ class WindowControllerDeviceManager:
                     # 异步触发设备注册
                     self._spawn_background_task(
                         self._async_fast_register_device(device_sn, device_name)
-                    )
-                    
-                    # 立即触发设备添加回调，确保实体被创建
-                    self._spawn_background_task(
-                        self._notify_device_added_callbacks(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER)
                     )
                     
                     processed_count += 1
@@ -617,10 +612,8 @@ class WindowControllerDeviceManager:
                                     device_sn, existing_gateway_sn, self.gateway_sn)
                         return None
             
-            # 更新设备类型为开窗器
+            # 更新设备类型为开窗器（保留用户自定义的设备名称）
             self.devices[device_sn]["type"] = device_type
-            # 更新设备名称
-            self.devices[device_sn]["name"] = self._format_device_name(device_sn, device_name)
             
             # 更新设备注册信息，确保config_entry_id和via_device正确
             try:
@@ -670,9 +663,6 @@ class WindowControllerDeviceManager:
             _LOGGER.info("设备已存在，重新触发回调: %s", device_sn)
             return self.devices[device_sn]
             
-        # 格式化设备名称
-        device_name_with_sn = self._format_device_name(device_sn, device_name)
-        
         device_info = {
             "sn": device_sn,
             "name": device_name_with_sn,
@@ -724,6 +714,7 @@ class WindowControllerDeviceManager:
                 self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING] = {}
             self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING][device_sn] = self.gateway_sn
             _LOGGER.info("设备 %s 已添加到网关 %s，已更新映射关系", device_sn, self.gateway_sn)
+            self._save_device_to_gateway_mapping()
             
             # 如果设备在手动删除列表中，添加成功后从列表中移除
             if device_sn in self._manually_removed_devices:
@@ -890,7 +881,38 @@ class WindowControllerDeviceManager:
         """获取所有设备"""
         # 返回设备列表的浅拷贝，避免外部修改影响内部状态
         return [device.copy() for device in self.devices.values()]
-        
+
+    async def rename_device(self, device_sn: str, new_name: str) -> bool:
+        """重命名子设备并同步到HA注册表"""
+        new_name = new_name.strip()
+        if not new_name or len(new_name) > 50:
+            _LOGGER.error("重命名失败：新名称长度必须为 1-50 个字符，当前输入 '%s' 长度为 %d", new_name, len(new_name))
+            return False
+
+        if device_sn not in self.devices:
+            _LOGGER.error("重命名失败：设备 %s 不存在", device_sn)
+            return False
+
+        old_name = self.devices[device_sn]["name"]
+        self.devices[device_sn]["name"] = new_name
+
+        from homeassistant.helpers.device_registry import async_get as async_get_device_registry
+
+        device_registry = async_get_device_registry(self.hass)
+        for device_entry in device_registry.devices.values():
+            identifiers = device_entry.identifiers
+            for domain, identifier in identifiers:
+                if domain == DOMAIN and identifier == device_sn:
+                    device_registry.async_update_device(
+                        device_entry.id,
+                        name_by_user=new_name
+                    )
+                    break
+
+        self._trigger_persistent_save()
+        _LOGGER.info("设备 %s 重命名成功: %s → %s", device_sn, old_name, new_name)
+        return True
+
     async def cleanup(self):
         """清理资源"""
         _LOGGER.info("清理设备管理器资源")

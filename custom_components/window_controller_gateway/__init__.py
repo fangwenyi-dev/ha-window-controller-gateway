@@ -21,6 +21,8 @@ from .const import (
     SERVICE_START_PAIRING, 
     SERVICE_REFRESH_DEVICES,
     SERVICE_MIGRATE_DEVICES,
+    SERVICE_RENAME_DEVICE,
+    ATTR_NEW_NAME,
     SCAN_INTERVAL,
     DEVICE_TO_GATEWAY_MAPPING,
     DEVICE_TO_GATEWAY_MAPPING_FILE,
@@ -118,15 +120,74 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             _LOGGER.error("未找到设备ID %s 对应的网关", device_id)
             return
 
+        mqtt_handler = gateway_data.get("mqtt_handler")
+        if not mqtt_handler:
+            _LOGGER.error("未找到MQTT处理器")
+            return
+
         try:
-            await gateway_data["mqtt_handler"].start_pairing(duration)
-            _LOGGER.info("已为网关 %s 发起配对", gateway_sn)
+            if hasattr(mqtt_handler, '_pairing_timeout_handle') and mqtt_handler._pairing_timeout_handle:
+                mqtt_handler._pairing_timeout_handle.cancel()
+                mqtt_handler._pairing_timeout_handle = None
+
+            success = await mqtt_handler.send_command(mqtt_handler.gateway_sn, "start_pairing")
+            if not success:
+                _LOGGER.error("发送配对命令失败")
+                return
+
+            mqtt_handler.pairing_active = True
+            mqtt_handler._notify_status_change()
+
+            hass.create_task(
+                gateway_data["device_manager"].update_gateway_status("pairing")
+            )
+
+            _LOGGER.info("已为网关 %s 发起配对，持续时间: %d秒", gateway_sn, duration)
+
+            def pairing_timeout():
+                mqtt_handler._pairing_timeout_handle = None
+                mqtt_handler.pairing_active = False
+                mqtt_handler._notify_status_change()
+                hass.async_create_task(
+                    gateway_data["device_manager"].update_gateway_status(
+                        "online" if mqtt_handler.connected else "offline"
+                    )
+                )
+                _LOGGER.info("配对模式已超时，恢复正常状态")
+
+            mqtt_handler._pairing_timeout_handle = hass.loop.call_later(duration, pairing_timeout)
         except (ConnectionError, TimeoutError) as e:
             _LOGGER.error("网关 %s 连接或超时错误: %s", gateway_sn, e)
         except (KeyError, AttributeError) as e:
             _LOGGER.error("网关 %s MQTT处理器未找到或配置错误: %s", gateway_sn, e)
         except Exception as e:
             _LOGGER.error("网关 %s 执行配对命令失败: %s", gateway_sn, e)
+
+    async def handle_rename_device(call: ServiceCall) -> None:
+        """处理重命名设备服务调用"""
+        device_id = call.data.get("device_id")
+        new_name = call.data.get(ATTR_NEW_NAME)
+
+        if not device_id or not new_name:
+            _LOGGER.error("重命名设备服务调用失败：参数不完整")
+            return
+
+        gateway_data, gateway_sn = find_gateway_by_device_id(hass, device_id)
+        if not gateway_data:
+            _LOGGER.error("未找到设备ID %s 对应的网关", device_id)
+            return
+
+        device_manager = gateway_data.get("device_manager")
+        if not device_manager:
+            _LOGGER.error("未找到设备管理器")
+            return
+
+        try:
+            success = await device_manager.rename_device(device_id, new_name)
+            if success:
+                _LOGGER.info("设备 %s 已重命名为 %s", device_id, new_name)
+        except Exception as e:
+            _LOGGER.error("设备 %s 重命名失败: %s", device_id, e)
 
     async def handle_refresh_devices(call: ServiceCall) -> None:
         """处理刷新设备服务调用 - 优化版，减少阻塞"""
@@ -500,6 +561,17 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
                 vol.Optional("remove_old_gateway", default=False): cv.boolean,
             })
         )
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_RENAME_DEVICE,
+            handle_rename_device,
+            schema=vol.Schema({
+                vol.Required("device_id"): cv.string,
+                vol.Required(ATTR_NEW_NAME): cv.string,
+            })
+        )
+
         _LOGGER.info("开窗器网关服务注册成功")
     except vol.Invalid as e:
         _LOGGER.error("服务参数模式无效: %s", e)
@@ -774,7 +846,7 @@ async def _background_initialization(mqtt_handler):
     try:
         await asyncio.sleep(0.5)
         _LOGGER.debug("后台任务：正在触发快速设备发现...")
-        asyncio.create_task(mqtt_handler.fast_discovery())
+        await mqtt_handler.fast_discovery()
         _LOGGER.debug("后台任务：初始化完成")
     except Exception as e:
         _LOGGER.warning("后台初始化任务出错: %s", e)
