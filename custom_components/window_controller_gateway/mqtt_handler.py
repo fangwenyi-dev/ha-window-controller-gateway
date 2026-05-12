@@ -302,8 +302,14 @@ class WindowControllerMQTTHandler:
                 await self._subscribe_topics()
                 
                 # 重新启动网关超时检查任务
-                if self._check_task and self._check_task.done():
-                    self._check_task = self.hass.loop.create_task(self._check_gateway_timeout())
+                if self._check_task:
+                    if not self._check_task.done():
+                        self._check_task.cancel()
+                        try:
+                            await self._check_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                self._check_task = self.hass.loop.create_task(self._check_gateway_timeout())
                 
                 _LOGGER.debug("MQTT重新连接成功")
                 return
