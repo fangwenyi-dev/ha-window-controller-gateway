@@ -23,7 +23,6 @@ from .const import (
     DEVICE_REGISTRATION_DELAY,
     GATEWAY_READY_DELAY,
     DEVICE_SETUP_DELAY,
-    MIGRATION_DELAY
 )
 from .persist import save_persistent_data
 
@@ -1340,88 +1339,42 @@ class WindowControllerDeviceManager:
         return False
     
     async def _recreate_platform_entities(self, new_gateway_sn: str, device_sns: List[str]):
-        """重新创建平台实体"""
-        import asyncio
+        """重新创建平台实体 - 原地更新配置条目关联，避免删除重建造成的空窗期"""
         from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
-        
+
         entity_registry = async_get_entity_registry(self.hass)
-        
-        # 使用类常量 entity_recreate_platforms
-        
-        all_entities_to_remove = []
-        
+        device_registry = await self._get_device_registry()
+
         for platform in self.entity_recreate_platforms:
-            entities_to_remove = []
-            
             for entity_id, entity_entry in entity_registry.entities.items():
                 if entity_entry.platform == DOMAIN and entity_entry.domain == platform:
-                    # 检查是否属于要迁移的设备
                     for device_sn in device_sns:
                         if device_sn in entity_entry.unique_id:
-                            entities_to_remove.append(entity_id)
+                            new_device = device_registry.async_get_device(
+                                identifiers={(DOMAIN, device_sn)}
+                            )
+                            if new_device and entity_entry.config_entry_id != self.entry.entry_id:
+                                entity_registry.async_get_or_create(
+                                    domain=entity_entry.domain,
+                                    platform=DOMAIN,
+                                    unique_id=entity_entry.unique_id,
+                                    config_entry=self.entry,
+                                    device_id=new_device.id,
+                                )
+                                _LOGGER.debug(
+                                    "已更新实体 %s 的配置条目关联", entity_id
+                                )
                             break
-            
-            if entities_to_remove:
-                _LOGGER.info("准备移除 %s 平台实体: %d 个", platform, len(entities_to_remove))
-                all_entities_to_remove.extend(entities_to_remove)
-                
-                # 先移除旧实体
-                for entity_id in entities_to_remove:
-                    try:
-                        entity_registry.async_remove(entity_id)
-                        _LOGGER.debug("已移除实体: %s", entity_id)
-                    except Exception as e:
-                        _LOGGER.error("移除实体失败 %s: %s", entity_id, e)
-        
-        # 触发设备添加回调，确保设备被添加到新网关的设备管理器中
-        device_registry = await self._get_device_registry()
+
         for device_sn in device_sns:
-            # 查找设备在注册表中的记录
             device = device_registry.async_get_device(
                 identifiers={(DOMAIN, device_sn)}
             )
-            
             if device:
-                # 触发设备添加回调
-                await self._notify_device_added_callbacks(device_sn, device.name, DEVICE_TYPE_WINDOW_OPENER)
-                _LOGGER.info("已触发设备 %s 的添加回调（重新创建平台实体）", device_sn)
-        
-        # 等待设备添加回调执行完成 - 减少等待时间
-        await asyncio.sleep(MIGRATION_DELAY)
-        
-        # 触发平台重新加载
-        if all_entities_to_remove:
-            _LOGGER.info("触发平台重新加载，共 %d 个实体", len(all_entities_to_remove))
-            for platform in self.entity_recreate_platforms:
-                await self._reload_platform(platform)
-        
-        # 重新加载所有已配置的网关，确保所有设备实体都被正确创建
-        _LOGGER.info("重新加载所有已配置的网关，确保所有设备实体都被正确创建")
-        existing_entries = self.hass.config_entries.async_entries(DOMAIN)
-        for entry in existing_entries:
-            if entry.data.get(CONF_GATEWAY_SN) == new_gateway_sn:
-                await self.hass.config_entries.async_reload(entry.entry_id)
-                _LOGGER.info("已重新加载新网关配置条目: %s", entry.entry_id)
-    
-    async def _reload_platform(self, platform: str):
-        """重新加载特定平台"""
-        try:
-            # 获取相关配置条目
-            config_entry = self.hass.config_entries.async_get_entry(self.entry.entry_id)
-            if not config_entry:
-                _LOGGER.error("配置条目未找到: %s", self.entry.entry_id)
-                return
-            
-            # 卸载平台
-            await self.hass.config_entries.async_forward_entry_unload(config_entry, platform)
-            
-            # 重新加载平台
-            await self.hass.config_entries.async_forward_entry_setup(config_entry, platform)
-            
-            _LOGGER.info("平台 %s 重新加载完成", platform)
-        except Exception as e:
-            _LOGGER.error("重新加载平台 %s 失败: %s", platform, e)
-    
+                await self._notify_device_added_callbacks(
+                    device_sn, device.name, DEVICE_TYPE_WINDOW_OPENER
+                )
+
     async def _verify_entity_migration(self, old_gateway_sn: str, new_gateway_sn: str) -> bool:
         """验证实体迁移是否成功"""
         entity_registry = await self._get_entity_registry()

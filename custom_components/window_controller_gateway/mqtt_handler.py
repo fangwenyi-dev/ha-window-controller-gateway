@@ -3,7 +3,7 @@ import logging
 import json
 import asyncio
 import random
-import threading
+import uuid
 import weakref
 import time
 from datetime import datetime
@@ -58,7 +58,8 @@ class WindowControllerMQTTHandler:
         self.command_id = DEFAULT_COMMAND_ID  # 命令ID初始值
         self._check_task = None  # 后台任务引用
         self._unsub_rsp = None  # MQTT 订阅取消函数
-        self._msg_lock = threading.Lock()  # 消息去重锁
+        self._msg_lock = asyncio.Lock()  # 异步消息去重锁
+        self.instance_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, hass.config.config_dir))
         
         # MQTT主题定义 - 根据协议要求简化为两个主题
         self.TOPIC_GATEWAY_REQ = TOPIC_GATEWAY_REQ_FORMAT.format(gateway_sn=gateway_sn)  # 发送命令到网关
@@ -159,21 +160,6 @@ class WindowControllerMQTTHandler:
                     msg_key = f"{ctype}_{payload.get('id', 0)}_{response_sn}"
                     current_time = time.time()
                     
-                    with self._msg_lock:
-                        # 清理过期的消息记录
-                        self._processed_messages = {
-                            k: v for k, v in self._processed_messages.items()
-                            if current_time - v < self._message_dedup_duration
-                        }
-                        
-                        # 如果消息已处理过，跳过
-                        if msg_key in self._processed_messages:
-                            _LOGGER.debug("跳过重复消息: %s", msg_key)
-                            return
-                        
-                        # 记录新消息
-                        self._processed_messages[msg_key] = current_time
-                    
                     # 如果是来自未配置网关的消息，触发网关发现
                     if response_sn != self.gateway_sn:
                         try:
@@ -220,7 +206,11 @@ class WindowControllerMQTTHandler:
                     
                     if ctype in ctype_handlers:
                         self._schedule_async_task(
-                            ctype_handlers[ctype](payload, ctype, data)
+                            self._dispatch_with_dedup(
+                                ctype_handlers[ctype](payload, ctype, data),
+                                msg_key,
+                                current_time
+                            )
                         )
                     else:
                         _LOGGER.warning("未知的消息类型: %s", ctype)
@@ -837,6 +827,19 @@ class WindowControllerMQTTHandler:
                        task_type, i//batch_size + 1, success_count, len(batch_tasks))
         _LOGGER.info("所有批次%s完成，总成功: %d，总总数: %d", task_type, total_success, len(tasks))
     
+    async def _dispatch_with_dedup(self, handler_coro, msg_key: str, current_time: float):
+        """带去重检查的异步任务分发"""
+        async with self._msg_lock:
+            self._processed_messages = {
+                k: v for k, v in self._processed_messages.items()
+                if current_time - v < self._message_dedup_duration
+            }
+            if msg_key in self._processed_messages:
+                _LOGGER.debug("跳过重复消息: %s", msg_key)
+                return
+            self._processed_messages[msg_key] = current_time
+        await handler_coro
+
     async def _handle_ctype_001(self, payload, ctype, data):
         """处理协议类型001：绑定网关"""
         # 检查是否包含设备信息（vesion, model等字段）
@@ -853,7 +856,7 @@ class WindowControllerMQTTHandler:
                 "sn": self.gateway_sn,
                 "data": {
                     "errcode": 0,
-                    "uuid": "4bc297c6-308d-4397-b1d6-2ef6ccc329d3"
+                    "uuid": self.instance_uuid
                 }
             }
             
@@ -883,7 +886,7 @@ class WindowControllerMQTTHandler:
                 "sn": self.gateway_sn,
                 "data": {
                     "errcode": 0,
-                    "uuid": "4bc297c6-308d-4397-b1d6-2ef6ccc329d3"
+                    "uuid": self.instance_uuid
                 }
             }
             
