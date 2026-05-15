@@ -52,11 +52,14 @@ async def save_persistent_data(hass: HomeAssistant) -> None:
         }
 
         def _write_file():
-            import tempfile
             tmp_file = data_file + ".tmp"
-            with open(tmp_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            os.replace(tmp_file, data_file)
+            try:
+                with open(tmp_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                os.replace(tmp_file, data_file)
+            except OSError:
+                with open(data_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
 
         await hass.async_add_executor_job(_write_file)
 
