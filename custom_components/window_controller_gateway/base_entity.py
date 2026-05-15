@@ -42,6 +42,7 @@ class WindowControllerBaseEntity:
         self.gateway_sn = gateway_sn
         self.device_sn = device_sn
         self.device_name = device_name
+        self._mqtt_handler_cache = {}
     
     def get_current_gateway_sn(self) -> str:
         """统一获取设备当前关联的网关
@@ -62,9 +63,12 @@ class WindowControllerBaseEntity:
         """
         current_gateway_sn = self.get_current_gateway_sn()
         if current_gateway_sn != self.gateway_sn:
+            if current_gateway_sn in self._mqtt_handler_cache:
+                return self._mqtt_handler_cache[current_gateway_sn]
             for entry_id, data in self.hass.data[DOMAIN].items():
                 if isinstance(data, dict) and data.get("gateway_sn") == current_gateway_sn:
                     if "mqtt_handler" in data:
+                        self._mqtt_handler_cache[current_gateway_sn] = data["mqtt_handler"]
                         return data["mqtt_handler"]
             _LOGGER.error("未找到设备 %s 关联的网关 %s 的MQTT处理器",
                          self.device_sn, current_gateway_sn)

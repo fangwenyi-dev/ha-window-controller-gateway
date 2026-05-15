@@ -196,35 +196,6 @@ class WindowControllerDeviceManager:
                     processed_count += 1
             
             _LOGGER.info("当前网关 %s 共加载 %d 个设备", self.gateway_sn, processed_count)
-            
-            # 如果没有匹配到设备，尝试更新映射表
-            if processed_count == 0 and device_to_gateway_mapping:
-                _LOGGER.debug("没有匹配到设备，尝试更新映射表")
-                for device_sn, mapped_gateway_sn in list(device_to_gateway_mapping.items()):
-                    mapped_lower = mapped_gateway_sn.lower()
-                    current_lower = self.gateway_sn.lower()
-                    if mapped_lower == current_lower:
-                        _LOGGER.info("发现匹配网关SN: %s, 更新映射表", mapped_gateway_sn)
-                        device_to_gateway_mapping[device_sn] = self.gateway_sn
-                        device_name = f"开窗器 {self.gateway_sn[-4:]}-{device_sn[-4:]}"
-                        self.devices[device_sn] = {
-                            "sn": device_sn,
-                            "name": device_name,
-                            "type": DEVICE_TYPE_WINDOW_OPENER,
-                            "status": "offline",
-                            "attributes": {}
-                        }
-                        _LOGGER.info("更新后加载设备: %s", device_sn)
-                        for callback in self._device_added_callbacks:
-                            try:
-                                self.hass.create_task(callback(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER))
-                            except Exception as e:
-                                _LOGGER.error("调用设备添加回调失败: %s", e)
-                    # ← 这里第二个循环保持不变，是特殊情况
-                    processed_count += 1
-                if processed_count > 0:
-                    self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING] = device_to_gateway_mapping
-                    _LOGGER.info("映射表已更新并保存")
         else:
             _LOGGER.info("设备到网关映射表不存在")
         
