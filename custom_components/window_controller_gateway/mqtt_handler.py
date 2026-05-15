@@ -973,7 +973,7 @@ class WindowControllerMQTTHandler:
                         existing_device = self.device_manager.get_device(device_sn)
                         if existing_device:
                             # 只更新状态，不重复添加
-                            update_tasks.append(self._update_existing_device(device_sn, device_info))
+                            update_tasks.append(self._update_device_attributes(device_sn, device_info))
                         else:
                             # 检查设备是否已添加到其他网关中
                             if DEVICE_TO_GATEWAY_MAPPING in self.hass.data[DOMAIN]:
@@ -1037,32 +1037,6 @@ class WindowControllerMQTTHandler:
         # 立即更新设备状态
         await self._update_device_attributes(device_sn, device_info)
 
-    async def _update_existing_device(self, device_sn, device_info):
-        """更新已有设备状态"""
-        attributes = {}
-        
-        # 提取设备属性
-        if "battery" in device_info:
-            try:
-                voltage = float(device_info["battery"]) / 10
-                attributes["voltage"] = voltage
-            except ValueError:
-                pass
-        
-        if "r_travel" in device_info:
-            try:
-                r_travel = int(device_info["r_travel"])
-                attributes["r_travel"] = r_travel
-            except ValueError:
-                pass
-        
-        if attributes:
-            # 确定设备状态
-            device_status = "closed" if attributes.get("r_travel") == 0 else "open"
-            await self.device_manager.update_device_status(device_sn, device_status, attributes)
-            # 立即通知状态变化
-            self._notify_device_status_change(device_sn)
-    
     async def _update_device_attributes(self, device_sn, device_info):
         """更新设备属性"""
         attributes = {}
@@ -1092,7 +1066,7 @@ class WindowControllerMQTTHandler:
     async def _handle_ctype_003(self, payload, ctype, data):
         """处理协议类型003：绑定子设备"""
         errcode = data.get("errcode", -1)
-        device_sn = data.get("sn")
+        device_sn = data.get("sn") or payload.get("sn")
         
         if errcode == 0 and device_sn:
             # 绑定成功，添加设备
@@ -1106,6 +1080,8 @@ class WindowControllerMQTTHandler:
             self.pairing_active = False
             self._notify_status_change()
             _LOGGER.info("设备绑定成功: %s, 名称: %s", device_sn, device_name)
+        elif errcode == 0 and not device_sn:
+            _LOGGER.warning("设备绑定成功但未返回设备SN，无法添加设备: %s", payload)
         else:
             # 错误码7可能表示通讯距离不够，不记录为错误
             if errcode == 7:

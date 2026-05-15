@@ -42,45 +42,6 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SENSOR, Platform.
 # 发现平台名称
 DISCOVERY_PLATFORM = "window_controller_gateway"
 
-async def _cleanup_duplicate_entities(hass: HomeAssistant, entry: ConfigEntry):
-    """清理重复实体
-    
-    清理可能存在的旧格式实体（包含entry_id的实体）
-    
-    Args:
-        hass: Home Assistant实例
-        entry: 配置条目
-    """
-    from homeassistant.helpers.entity_registry import async_get
-    
-    gateway_sn = entry.data[CONF_GATEWAY_SN]
-    entry_id = str(entry.entry_id)
-    
-    entity_registry = async_get(hass)
-    entities_to_remove = []
-    
-    # 查找所有可能的重复实体
-    for entity_id, entity_entry in entity_registry.entities.items():
-        if entity_entry.platform == DOMAIN:
-            # 检查实体是否属于当前网关
-            if entity_entry.unique_id:
-                # 如果实体ID包含entry_id，则是旧格式实体（需要删除）
-                # 新格式不包含entry_id，只基于设备SN或网关SN
-                if entry_id.lower() in entity_entry.entity_id:
-                    _LOGGER.info("发现旧格式实体（包含entry_id），准备删除: %s (唯一ID: %s)", entity_id, entity_entry.unique_id)
-                    entities_to_remove.append(entity_id)
-    
-    # 删除重复实体
-    for entity_id in entities_to_remove:
-        try:
-            entity_registry.async_remove(entity_id)
-            _LOGGER.info("已删除旧格式实体: %s", entity_id)
-        except Exception as e:
-            _LOGGER.error("删除旧格式实体失败 %s: %s", entity_id, e)
-    
-    if entities_to_remove:
-        _LOGGER.info("共删除 %d 个旧格式实体", len(entities_to_remove))
-
 async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
     """设置集成 - Home Assistant调用此函数加载集成"""
     _LOGGER.info("=== 开窗器网关集成初始化 ===")
@@ -688,9 +649,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # 设置平台（快速返回，不等待实体创建完成）
         _LOGGER.debug("正在设置前端平台组件...")
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-        # 清理重复实体（在设置完成后执行）
-        await _cleanup_duplicate_entities(hass, entry)
 
         # 监听HA停止事件
         hass.data[DOMAIN][entry.entry_id]["_stop_unsub"] = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _make_shutdown_handler(hass, entry))
