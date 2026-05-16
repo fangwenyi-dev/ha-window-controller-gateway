@@ -13,6 +13,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 PERSISTENT_DATA_FILE = "window_controller_gateway_data.json"
+SCHEMA_VERSION = 1
 
 async def load_persistent_data(hass: HomeAssistant) -> None:
     """加载持久化的设备映射和手动删除列表"""
@@ -26,6 +27,13 @@ async def load_persistent_data(hass: HomeAssistant) -> None:
                     return json.load(f)
 
             data = await hass.async_add_executor_job(_read_file)
+
+            version = data.get("schema_version", 0)
+            if version > SCHEMA_VERSION:
+                _LOGGER.warning(
+                    "持久化数据版本(%d)高于当前支持版本(%d)，可能不兼容",
+                    version, SCHEMA_VERSION
+                )
 
             if 'device_to_gateway_mapping' in data:
                 mapping = data['device_to_gateway_mapping']
@@ -47,6 +55,7 @@ async def save_persistent_data(hass: HomeAssistant) -> None:
         data_file = os.path.join(config_dir, PERSISTENT_DATA_FILE)
 
         data = {
+            'schema_version': SCHEMA_VERSION,
             'device_to_gateway_mapping': hass.data[DOMAIN].get(DEVICE_TO_GATEWAY_MAPPING, {}),
             'manually_removed_devices': list(hass.data[DOMAIN].get(GLOBAL_MANUALLY_REMOVED_DEVICES, set()))
         }
