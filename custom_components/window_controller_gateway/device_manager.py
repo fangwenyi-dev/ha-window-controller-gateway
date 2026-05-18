@@ -23,6 +23,7 @@ from .const import (
     DEVICE_REGISTRATION_DELAY,
     GATEWAY_READY_DELAY,
     DEVICE_SETUP_DELAY,
+    get_device_display_name,
 )
 from .persist import save_persistent_data
 
@@ -176,7 +177,7 @@ class WindowControllerDeviceManager:
                 gateway_match = (mapped_lower == current_lower)
                 
                 if gateway_match and device_sn not in self.devices:
-                    device_name = f"开窗器 {self.gateway_sn[-4:]}-{device_sn[-4:]}"
+                    device_name = get_device_display_name(self.gateway_sn, device_sn)
                     
                     # 同步添加到内存字典中
                     self.devices[device_sn] = {
@@ -821,8 +822,7 @@ class WindowControllerDeviceManager:
             else:
                 # 设备不存在，尝试添加
                 _LOGGER.debug("设备 %s 不存在，尝试添加", device_sn)
-                # 生成默认设备名称
-                device_name = f"设备 {device_sn[-6:]}"
+                device_name = get_device_display_name(self.gateway_sn, device_sn)
                 # 添加设备
                 await self.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER)
                 # 再次尝试更新状态

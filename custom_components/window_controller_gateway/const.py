@@ -124,3 +124,12 @@ MODEL: Final = "慧尖开窗器网关"
 VERSION: Final = "1.3.2"
 ICON_GATEWAY: Final = "mdi:gateway"
 ICON_WINDOW_OPENER: Final = "mdi:window-closed"
+
+
+def get_device_display_name(gateway_sn: str, device_sn: str, device_number: int = None) -> str:
+    """统一设备显示名称"""
+    short_gw = gateway_sn[-4:]
+    short_dev = device_sn[-4:]
+    if device_number is not None:
+        return f"开窗器 {short_gw}-{short_dev} (#{device_number:02d})"
+    return f"开窗器 {short_gw}-{short_dev}"

@@ -40,6 +40,7 @@ from .const import (
     TOPIC_GATEWAY_REQ_FORMAT,
     TOPIC_GATEWAY_RSP,
     DEVICE_TO_GATEWAY_MAPPING,
+    get_device_display_name,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -1028,8 +1029,7 @@ class WindowControllerMQTTHandler:
 
     async def _quick_add_device(self, device_sn, device_info):
         """快速添加设备 - 自动发现"""
-        # 使用网关SN和子设备SN后4位生成设备名称，与setup方法保持一致
-        device_name = f"开窗器 {self.gateway_sn[-4:]}-{device_sn[-4:]}"
+        device_name = get_device_display_name(self.gateway_sn, device_sn)
         
         # 直接调用设备管理器的添加方法（自动发现，不使用手动配对标记）
         await self.device_manager.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER)
@@ -1073,7 +1073,7 @@ class WindowControllerMQTTHandler:
             # 计算设备序号，从01开始
             device_count = len(self.device_manager.get_all_devices())
             device_number = device_count + 1
-            device_name = f"开窗器 {device_number:02d}"
+            device_name = get_device_display_name(self.gateway_sn, device_sn, device_number)
             # 手动配对时使用 is_manual_pairing=True，跳过手动删除列表检查
             await self.device_manager.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER, is_manual_pairing=True)
             # 配对成功后立即退出配对模式，UI 可以立刻从"配对中"恢复
