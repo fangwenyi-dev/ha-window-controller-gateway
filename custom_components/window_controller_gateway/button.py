@@ -3,7 +3,7 @@ import logging
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.components.button import ButtonEntity
 
 from .gateway import GatewayPairingButton, GatewayDeviceRemoveButton
@@ -111,6 +111,8 @@ class BaseWindowControllerButton(WindowControllerBaseEntity, ButtonEntity):
         self.entry_id = entry_id
         # 确保按钮始终可用，不会变成灰色
         self._attr_available = True
+        # 设为配置类，避免与Cover实体混杂在控制区
+        self._attr_entity_category = EntityCategory.CONFIG
     
     @property
     def device_info(self) -> DeviceInfo:
