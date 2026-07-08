@@ -173,7 +173,7 @@ class WindowControllerMQTTHandler:
                     if response_sn.lower() != self.gateway_sn.lower():
                         try:
                             from .discovery import async_discover_gateway
-                            gateway_name = f"网关 {response_sn[-6:]}"
+                            gateway_name = f"网关 {response_sn[-4:]}"
                             
                             # 检查是否处于替换模式
                             replace_mode = False
@@ -1045,8 +1045,14 @@ class WindowControllerMQTTHandler:
                 _LOGGER.error("位置状态数据格式错误: %s, 值: %s", e, device_info["r_travel"])
         
         if attributes:
-            device_status = "closed" if attributes.get("r_travel") == 0 else "open"
-            await self.device_manager.update_device_status(device_sn, device_status, attributes)
+            # 只有当 r_travel 实际存在于上报数据中时才推导设备状态，
+            # 避免仅有 battery/voltage 上报时将 None != 0 误判为 "open"
+            if "r_travel" in attributes:
+                device_status = "closed" if attributes["r_travel"] == 0 else "open"
+                await self.device_manager.update_device_status(device_sn, device_status, attributes)
+            else:
+                # 没有 r_travel 时只更新属性，不覆盖设备的状态字段
+                await self.device_manager.update_device_status(device_sn, None, attributes)
             self._notify_device_status_change(device_sn)
 
     async def _handle_ctype_003(self, payload, ctype, data):

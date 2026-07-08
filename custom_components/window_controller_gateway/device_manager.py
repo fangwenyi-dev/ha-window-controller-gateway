@@ -817,10 +817,17 @@ class WindowControllerDeviceManager:
                 _LOGGER.error("通知MQTT处理器设备删除失败: %s", e)
 
     async def update_device_status(self, device_sn: str, status: str, attributes: Optional[Dict[str, Any]] = None):
-        """更新设备状态"""
+        """更新设备状态
+
+        Args:
+            device_sn: 设备SN
+            status: 设备状态，传 None 时只更新属性、不覆盖状态字段
+            attributes: 要更新的属性字典
+        """
         try:
             if device_sn in self.devices:
-                self.devices[device_sn]["status"] = status
+                if status is not None:
+                    self.devices[device_sn]["status"] = status
                 self.devices[device_sn]["last_update"] = time.time()
                 if attributes:
                     # 直接更新属性，后收到的上报会覆盖先前的值
@@ -843,7 +850,8 @@ class WindowControllerDeviceManager:
                 await self.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER)
                 # 再次尝试更新状态
                 if device_sn in self.devices:
-                    self.devices[device_sn]["status"] = status
+                    if status is not None:
+                        self.devices[device_sn]["status"] = status
                     if attributes:
                         if "attributes" not in self.devices[device_sn]:
                             self.devices[device_sn]["attributes"] = {}
