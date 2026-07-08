@@ -3,7 +3,7 @@
   "render_readme": true,
   "filename": "window_controller_gateway.zip",
   "hide_default_branch": false,
-  "homeassistant": "2024.0.0",
+  "homeassistant": "2024.2.0",
   "country": ["CN"],
   "content_in_root": false,
   "zip_release": false

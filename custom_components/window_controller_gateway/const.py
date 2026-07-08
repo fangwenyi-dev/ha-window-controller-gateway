@@ -122,7 +122,7 @@ GATEWAY_PAIRING_TIMEOUT: Final = 60
 # ==================== 其他 ====================
 MANUFACTURER: Final = "慧尖"
 MODEL: Final = "慧尖开窗器网关"
-VERSION: Final = "1.3.2"
+VERSION: Final = "1.3.4"
 ICON_GATEWAY: Final = "mdi:gateway"
 ICON_WINDOW_OPENER: Final = "mdi:window-closed"
 
