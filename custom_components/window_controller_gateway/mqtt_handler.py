@@ -61,6 +61,9 @@ class WindowControllerMQTTHandler:
         self._unsub_rsp = None  # MQTT 订阅取消函数
         self._msg_lock = asyncio.Lock()  # 异步消息去重锁
         self.instance_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, hass.config.config_dir))
+        # P1 修复：将配对超时句柄统一存储在 mqtt_handler 上，
+        # 使服务调用和按钮按下共享同一个超时管理，避免重复超时回调。
+        self.pairing_timeout_handle = None
         
         # MQTT主题定义 - 根据协议要求简化为两个主题
         self.TOPIC_GATEWAY_REQ = TOPIC_GATEWAY_REQ_FORMAT.format(gateway_sn=gateway_sn)  # 发送命令到网关
@@ -84,8 +87,10 @@ class WindowControllerMQTTHandler:
                 asyncio.run_coroutine_threadsafe(coro, loop)
             else:
                 _LOGGER.warning("事件循环未运行，跳过任务调度")
+                coro.close()
         except RuntimeError as e:
             _LOGGER.error("调度异步任务失败: %s", e)
+            coro.close()
     
     async def setup(self):
         """设置MQTT处理器"""
@@ -162,7 +167,7 @@ class WindowControllerMQTTHandler:
                     current_time = time.time()
                     
                     # 如果是来自未配置网关的消息，触发网关发现
-                    if response_sn != self.gateway_sn:
+                    if response_sn.lower() != self.gateway_sn.lower():
                         try:
                             from .discovery import async_discover_gateway
                             gateway_name = f"网关 {response_sn[-6:]}"
@@ -220,7 +225,7 @@ class WindowControllerMQTTHandler:
                 
                 # 处理原有格式的响应（向后兼容）
                 gateway_sn = payload.get("gateway_sn")
-                if not gateway_sn or gateway_sn != self.gateway_sn:
+                if not gateway_sn or gateway_sn.lower() != self.gateway_sn.lower():
                     return
                 
                 response_type = payload.get("type")
@@ -407,12 +412,15 @@ class WindowControllerMQTTHandler:
             # 添加sn字段到payload的末尾
             payload["sn"] = self.gateway_sn
             
+            # 确保params不为None，避免后续访问 .get() 时崩溃
+            if params is None:
+                params = {}
+
             # 添加额外参数
-            if params:
-                try:
-                    payload["data"].update(params)
-                except Exception as e:
-                    _LOGGER.error("更新额外参数失败: %s", e)
+            try:
+                payload["data"].update(params)
+            except Exception as e:
+                _LOGGER.error("更新额外参数失败: %s", e)
             
             # 根据命令类型添加特定参数
             if command == "start_pairing":
@@ -451,6 +459,9 @@ class WindowControllerMQTTHandler:
                     _LOGGER.warning("位置参数无效，使用默认值0: %s", position)
                     position = 0
                 payload["data"]["value"] = str(position)
+            elif command == "status":
+                # 状态查询命令 - 必须包含设备SN，网关才能知道查询哪个设备
+                payload["data"]["sn"] = device_sn
             
             # 打印详细的命令信息
             _LOGGER.debug("发送命令到网关: %s, 命令: %s, 设备SN: %s, 载荷: %s", 
@@ -661,15 +672,28 @@ class WindowControllerMQTTHandler:
                 _LOGGER.debug("清理设备 %s 的回调条目", device_sn)
     
     async def check_connection(self):
-        """检查MQTT连接状态"""
+        """检查MQTT连接状态
+
+        发送标准 $SH 协议的 002 发现命令，既能验证 MQTT broker 连通性，
+        又能触发网关上报状态，保持网关活跃。
+        网关的 connected 状态由 handle_gateway_response 收到网关消息时设为 True，
+        由 _check_gateway_timeout 超时后设为 False。
+        """
         try:
-            # 发送一个心跳消息检查连接
+            # 使用标准 $SH 协议格式发送发现命令
             payload = {
-                "gateway_sn": self.gateway_sn,
-                "type": "heartbeat",
-                "timestamp": datetime.now().isoformat()
+                "head": PROTOCOL_HEAD,
+                "ctype": "002",
+                "id": self.command_id,
+                "data": {},
+                "sn": self.gateway_sn
             }
-            
+
+            # 递增命令ID
+            self.command_id += 1
+            if self.command_id > MAX_COMMAND_ID:
+                self.command_id = 1
+
             await mqtt.async_publish(
                 self.hass,
                 self.TOPIC_GATEWAY_REQ,
@@ -677,27 +701,19 @@ class WindowControllerMQTTHandler:
                 1,
                 False
             )
-            
-            # 只有当连接状态改变时才通知
-            if not self.connected:
-                self.connected = True
-                _LOGGER.debug("MQTT连接状态正常")
-                self._notify_status_change()
-                
-                self._schedule_async_task(
-                    self.device_manager.update_gateway_status("online")
-                )
+            _LOGGER.debug("MQTT broker 连通性检查通过（网关 %s）", self.gateway_sn)
         except Exception as e:
             _LOGGER.error("MQTT连接检查失败: %s", e)
-            
+
+            # 只有在 publish 失败时才标记离线（说明 MQTT broker 不可达）
             if self.connected:
                 self.connected = False
                 self._notify_status_change()
-                
+
                 self._schedule_async_task(
                     self.device_manager.update_gateway_status("offline")
                 )
-        
+
         return self.connected
     
     async def unbind_device(self, device_sn: str):
@@ -784,6 +800,14 @@ class WindowControllerMQTTHandler:
     async def cleanup(self):
         """清理MQTT资源"""
         _LOGGER.info("清理MQTT资源")
+        # 取消配对超时句柄
+        if self.pairing_timeout_handle:
+            try:
+                self.pairing_timeout_handle.cancel()
+            except Exception as e:
+                _LOGGER.debug("取消配对超时句柄异常: %s", e)
+            self.pairing_timeout_handle = None
+        
         # 取消后台任务
         if self._check_task:
             self._check_task.cancel()
@@ -837,18 +861,19 @@ class WindowControllerMQTTHandler:
             }
             if msg_key in self._processed_messages:
                 _LOGGER.debug("跳过重复消息: %s", msg_key)
+                handler_coro.close()
                 return
             self._processed_messages[msg_key] = current_time
         await handler_coro
 
     async def _handle_ctype_001(self, payload, ctype, data):
         """处理协议类型001：绑定网关"""
-        # 检查是否包含设备信息（vesion, model等字段）
-        if "vesion" in data or "model" in data or "userid" in data:
-            # 这是设备信息上报，需要回复001
-            _LOGGER.debug("收到网关设备信息: %s, 版本: %s", 
+        # 检查是否包含设备信息（vesion, model等字段）或网关主动发起绑定请求
+        # 两种情况都需要回复相同的 001 响应
+        if "errcode" not in data:
+            _LOGGER.debug("收到网关绑定请求/设备信息: %s, 版本: %s",
                          self.gateway_sn, data.get("vesion"))
-            
+
             # 构建响应消息 - 按照协议要求回复001
             response_payload = {
                 "head": PROTOCOL_HEAD,
@@ -860,38 +885,8 @@ class WindowControllerMQTTHandler:
                     "uuid": self.instance_uuid
                 }
             }
-            
-            # 发送响应到网关 - 按照协议要求发送到gateway/<sn>/req主题
-            await mqtt.async_publish(
-                self.hass,
-                self.TOPIC_GATEWAY_REQ,
-                json.dumps(response_payload),
-                1,
-                False
-            )
-            _LOGGER.info("发送网关设备信息响应成功到主题: %s", self.TOPIC_GATEWAY_REQ)
-            
-            # 更新网关状态为在线
-            await self.device_manager.update_gateway_status("online")
-            self.connected = True
-            self._notify_status_change()
-        elif "errcode" not in data:
-            # 网关主动发起绑定请求，需要发送响应
-            _LOGGER.info("收到网关绑定请求: %s", self.gateway_sn)
-            
-            # 构建响应消息 - 按照协议要求回复001
-            response_payload = {
-                "head": PROTOCOL_HEAD,
-                "ctype": "001",
-                "id": payload.get("id", 0),
-                "sn": self.gateway_sn,
-                "data": {
-                    "errcode": 0,
-                    "uuid": self.instance_uuid
-                }
-            }
-            
-            # 发送响应到网关 - 按照协议要求发送到gateway/<sn>/req主题
+
+            # 发送响应到网关
             await mqtt.async_publish(
                 self.hass,
                 self.TOPIC_GATEWAY_REQ,
@@ -900,23 +895,17 @@ class WindowControllerMQTTHandler:
                 False
             )
             _LOGGER.info("发送网关绑定响应成功到主题: %s", self.TOPIC_GATEWAY_REQ)
-            
+
             # 更新网关状态
             await self.device_manager.update_gateway_status("online")
-            self.connected = True
-            self._notify_status_change()
         else:
             # 处理网关响应（可能来自其他系统）
             errcode = data.get("errcode", -1)
             if errcode == 0:
                 _LOGGER.info("网关绑定成功: %s", self.gateway_sn)
                 await self.device_manager.update_gateway_status("online")
-                self.connected = True
-                self._notify_status_change()
             else:
                 _LOGGER.error("网关绑定失败，错误码: %d", errcode)
-                self.connected = False
-                self._notify_status_change()
 
     async def _handle_ctype_002(self, payload, ctype, data):
         """处理协议类型002：网关状态上报 - 优化版"""
@@ -924,17 +913,11 @@ class WindowControllerMQTTHandler:
             status = data.get("status", "unknown")
             _LOGGER.debug("网关状态上报: %s", status)
             await self.device_manager.update_gateway_status(status)
-            self.connected = True  # 收到上报就认为在线
-            self._notify_status_change()
+            # connected 状态已由 handle_gateway_response 在消息分发前设置，此处无需重复
             
-            # 触发网关发现，确保忽略按钮显示
-            try:
-                from .discovery import async_discover_gateway
-                gateway_name = f"慧尖网关 {self.gateway_sn[-4:]}"
-                await async_discover_gateway(self.hass, self.gateway_sn, gateway_name)
-                _LOGGER.debug("触发网关发现，确保忽略按钮显示")
-            except Exception as e:
-                _LOGGER.debug("触发网关发现失败: %s", e)
+            # 002 上报时不再重复触发 async_discover_gateway，
+            # 网关已在配置流程中注册，重复发现只会浪费资源。
+            # 发现流程由 _subscribe_topics 中收到未配置网关消息时触发。
             
             # 批量处理设备列表
             if "devices" in data:
@@ -981,7 +964,7 @@ class WindowControllerMQTTHandler:
                                 device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
                                 if device_sn in device_to_gateway_mapping:
                                     existing_gateway_sn = device_to_gateway_mapping[device_sn]
-                                    if existing_gateway_sn != self.gateway_sn:
+                                    if existing_gateway_sn.lower() != self.gateway_sn.lower():
                                         _LOGGER.info("设备 %s 已添加到网关 %s，不自动添加到当前网关 %s", 
                                                     device_sn, existing_gateway_sn, self.gateway_sn)
                                         continue
@@ -1077,6 +1060,10 @@ class WindowControllerMQTTHandler:
             # 手动配对时使用 is_manual_pairing=True，跳过手动删除列表检查
             await self.device_manager.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER, is_manual_pairing=True)
             # 配对成功后立即退出配对模式，UI 可以立刻从"配对中"恢复
+            # 同时取消配对超时定时器，避免超时回调冗余触发
+            if self.pairing_timeout_handle:
+                self.pairing_timeout_handle.cancel()
+                self.pairing_timeout_handle = None
             self.pairing_active = False
             self._notify_status_change()
             _LOGGER.info("设备绑定成功: %s, 名称: %s", device_sn, device_name)
@@ -1100,15 +1087,10 @@ class WindowControllerMQTTHandler:
             else:
                 _LOGGER.debug("设备控制成功，但未返回设备SN")
         else:
-            # 错误码7可能表示通讯距离不够，不记录为错误
             if errcode == 7:
                 _LOGGER.debug("设备控制失败，错误码: %d, SN: %s (可能是通讯距离不够)", errcode, device_sn)
             else:
-                # 其他错误码记录为警告
                 _LOGGER.warning("设备控制失败，错误码: %d, SN: %s", errcode, device_sn)
-            # 尝试重新发送命令，可能是临时错误
-            if device_sn:
-                _LOGGER.debug("尝试重新发送命令到设备: %s", device_sn)
 
     async def _handle_ctype_005(self, payload, ctype, data):
         """处理协议类型005：设备上报"""

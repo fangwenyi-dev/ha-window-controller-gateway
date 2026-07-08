@@ -87,9 +87,11 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             return
 
         try:
-            if hasattr(mqtt_handler, '_pairing_timeout_handle') and mqtt_handler._pairing_timeout_handle:
-                mqtt_handler._pairing_timeout_handle.cancel()
-                mqtt_handler._pairing_timeout_handle = None
+            # P1 修复：使用 mqtt_handler.pairing_timeout_handle 统一管理配对超时，
+            # 确保服务调用和按钮按下共享同一个超时句柄，避免重复超时回调。
+            if mqtt_handler.pairing_timeout_handle:
+                mqtt_handler.pairing_timeout_handle.cancel()
+                mqtt_handler.pairing_timeout_handle = None
 
             success = await mqtt_handler.send_command(mqtt_handler.gateway_sn, "start_pairing")
             if not success:
@@ -99,14 +101,14 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             mqtt_handler.pairing_active = True
             mqtt_handler._notify_status_change()
 
-            hass.create_task(
+            hass.async_create_task(
                 gateway_data["device_manager"].update_gateway_status("pairing")
             )
 
             _LOGGER.info("已为网关 %s 发起配对，持续时间: %d秒", gateway_sn, duration)
 
             def pairing_timeout():
-                mqtt_handler._pairing_timeout_handle = None
+                mqtt_handler.pairing_timeout_handle = None
                 mqtt_handler.pairing_active = False
                 mqtt_handler._notify_status_change()
                 hass.async_create_task(
@@ -116,7 +118,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
                 )
                 _LOGGER.info("配对模式已超时，恢复正常状态")
 
-            mqtt_handler._pairing_timeout_handle = hass.loop.call_later(duration, pairing_timeout)
+            mqtt_handler.pairing_timeout_handle = hass.loop.call_later(duration, pairing_timeout)
         except (ConnectionError, TimeoutError) as e:
             _LOGGER.error("网关 %s 连接或超时错误: %s", gateway_sn, e)
         except (KeyError, AttributeError) as e:
@@ -133,9 +135,11 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             _LOGGER.error("重命名设备服务调用失败：参数不完整")
             return
 
-        gateway_data, gateway_sn = find_gateway_by_device_id(hass, device_id)
-        if not gateway_data:
-            _LOGGER.error("未找到设备ID %s 对应的网关", device_id)
+        # P0 修复：使用 find_device_by_device_id 解析出设备 SN，
+        # 而非直接把 device_id（可能是 HA 设备 ID）传给 rename_device。
+        device, gateway_data, gateway_sn = find_device_by_device_id(hass, device_id)
+        if not device or not gateway_data:
+            _LOGGER.error("未找到设备ID %s 对应的设备", device_id)
             return
 
         device_manager = gateway_data.get("device_manager")
@@ -144,9 +148,10 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             return
 
         try:
-            success = await device_manager.rename_device(device_id, new_name)
+            device_sn = device["sn"]
+            success = await device_manager.rename_device(device_sn, new_name)
             if success:
-                _LOGGER.info("设备 %s 已重命名为 %s", device_id, new_name)
+                _LOGGER.info("设备 %s 已重命名为 %s", device_sn, new_name)
         except Exception as e:
             _LOGGER.error("设备 %s 重命名失败: %s", device_id, e)
 
@@ -176,7 +181,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
                 _LOGGER.error("网关 %s 触发设备发现失败: %s", gateway_sn, e)
         
         # 创建异步任务，立即返回
-        hass.create_task(refresh_devices_async())
+        hass.async_create_task(refresh_devices_async())
         _LOGGER.info("刷新设备服务调用已提交，设备ID: %s", device_id)
 
     async def handle_set_position(call: ServiceCall) -> None:
@@ -226,7 +231,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
                 _LOGGER.error("设置设备位置失败: %s", e)
         
         # 创建异步任务，立即返回
-        hass.create_task(set_position_async())
+        hass.async_create_task(set_position_async())
         _LOGGER.info("设置位置服务调用已提交，设备ID: %s，位置: %d", device_id, position)
 
     async def handle_check_gateway_status(call: ServiceCall) -> None:
@@ -271,13 +276,13 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             _LOGGER.error("新网关SN格式无效: %s", new_gateway_sn)
             return
         
-        # 修改验证逻辑：允许字母和数字（十六进制格式）
-        if not re.match(r'^[a-fA-F0-9]+$', old_gateway_sn):
-            _LOGGER.error("旧网关SN必须只包含字母和数字: %s", old_gateway_sn)
+        # 验证SN格式：与 config_flow.py 的 validate_gateway_sn 保持一致，允许所有字母和数字
+        if not re.match(r'^[a-zA-Z0-9]+$', old_gateway_sn):
+            _LOGGER.error("旧网关SN格式无效，只允许字母和数字: %s", old_gateway_sn)
             return
         
-        if not re.match(r'^[a-fA-F0-9]+$', new_gateway_sn):
-            _LOGGER.error("新网关SN必须只包含字母和数字: %s", new_gateway_sn)
+        if not re.match(r'^[a-zA-Z0-9]+$', new_gateway_sn):
+            _LOGGER.error("新网关SN格式无效，只允许字母和数字: %s", new_gateway_sn)
             return
         
         if not isinstance(remove_old_gateway, bool):
@@ -285,7 +290,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             return
 
         # 检查新旧网关是否相同
-        if old_gateway_sn == new_gateway_sn:
+        if old_gateway_sn.lower() == new_gateway_sn.lower():
             _LOGGER.error("新旧网关不能相同: %s", old_gateway_sn)
             return
 
@@ -294,7 +299,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
         # 1. 验证网关存在
         def find_gateway_entry(gateway_sn):
             for entry in hass.config_entries.async_entries(DOMAIN):
-                if CONF_GATEWAY_SN in entry.data and entry.data[CONF_GATEWAY_SN] == gateway_sn:
+                if CONF_GATEWAY_SN in entry.data and entry.data[CONF_GATEWAY_SN].lower() == gateway_sn.lower():
                     return entry
             return None
 
@@ -302,7 +307,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
         new_gateway_entry = find_gateway_entry(new_gateway_sn)
 
         if not old_gateway_entry or not new_gateway_entry:
-            _LOGGER.error("网关不存在，旧网关: %s, 新网关: %s", old_gateway_entry, new_gateway_entry)
+            _LOGGER.error("网关不存在，旧网关SN: %s, 新网关SN: %s", old_gateway_sn, new_gateway_sn)
             return
 
         _LOGGER.info("找到网关条目，旧网关: %s, 新网关: %s", old_gateway_entry.entry_id, new_gateway_entry.entry_id)
@@ -383,15 +388,8 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
                         }
                     )
                     
-                    # 同时发送一个通用的Home Assistant事件，触发UI刷新
-                    hass.bus.async_fire(
-                        "homeassistant/reload_entities",
-                        {
-                            "domain": DOMAIN,
-                            "entry_id": new_gateway_entry.entry_id
-                        }
-                    )
-                    
+                    # P1 修复：移除不存在的 homeassistant/reload_entities 事件（死代码），
+                    # 该事件并非 HA 标准事件，不会触发任何 UI 刷新。
                     _LOGGER.info("已通知前端刷新，用户可能需要手动刷新页面或等待自动更新")
                     
                 except Exception as reload_error:
@@ -562,7 +560,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.critical("导入核心模块失败: %s", e)
         return False
 
-    gateway_sn = entry.data[CONF_GATEWAY_SN]
     gateway_name = entry.data.get(CONF_GATEWAY_NAME, f"{DEFAULT_GATEWAY_NAME} {gateway_sn[-4:]}")
     
     device_manager = None
@@ -587,7 +584,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # 创建MQTT处理器（快速初始化，不等待连接）
         _LOGGER.debug("正在创建MQTT处理器...")
         mqtt_handler = WindowControllerMQTTHandler(hass, gateway_sn, device_manager)
-        await mqtt_handler.setup()
+        mqtt_setup_ok = await mqtt_handler.setup()
+        if not mqtt_setup_ok:
+            _LOGGER.error("MQTT处理器初始化失败，MQTT集成可能未启用")
+            raise ConfigEntryNotReady("MQTT集成未启用，请先在Home Assistant中启用MQTT集成")
         
         # 预先将 device_manager 和 mqtt_handler 存储到 entry_data
         # 确保在设备加载回调触发时，平台可以访问到这些对象
@@ -615,10 +615,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         auto_discovery = options.get("auto_discovery", True)
         debug_logging = options.get("debug_logging", False)
         
-        # 如果启用了调试日志，设置日志级别
+        # P1 修复：启用/禁用调试日志时显式设置日志级别，避免关闭后仍为 DEBUG
         if debug_logging:
             _LOGGER.setLevel(logging.DEBUG)
             _LOGGER.info("调试日志已启用")
+        else:
+            _LOGGER.setLevel(logging.INFO)
 
         # 设置状态定期更新（取消定时设备发现，只保留连接检查）
         async def periodic_update(_now):
@@ -664,8 +666,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             old_gateway_sn = migration_info.get("old_gateway_sn")
             remove_old_gateway = migration_info.get("remove_old_gateway", False)
             _LOGGER.info("准备迁移设备，旧网关: %s, 新网关: %s, 是否移除旧网关: %s", old_gateway_sn, gateway_sn, remove_old_gateway)
-            if old_gateway_sn and old_gateway_sn != gateway_sn:
-                hass.create_task(_migrate_devices_async(hass, old_gateway_sn, gateway_sn, remove_old_gateway), name=f"{DOMAIN}_migrate_{entry.entry_id}")
+            if old_gateway_sn and old_gateway_sn.lower() != gateway_sn.lower():
+                hass.async_create_task(_migrate_devices_async(hass, old_gateway_sn, gateway_sn, remove_old_gateway), name=f"{DOMAIN}_migrate_{entry.entry_id}")
 
         _LOGGER.info("开窗器网关 [%s] 设置完成", gateway_name)
         return True
@@ -692,8 +694,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info("正在卸载配置条目: %s", entry_id)
 
     if DOMAIN not in hass.data or entry_id not in hass.data[DOMAIN]:
-        _LOGGER.debug("要卸载的条目 %s 未在数据中找到", entry_id)
-        return False
+        _LOGGER.debug("要卸载的条目 %s 未在数据中找到（可能已被清理），视为卸载成功", entry_id)
+        return True
 
     data = hass.data[DOMAIN][entry_id]
     unload_successful = True
@@ -791,7 +793,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         
         # 找出所有映射到该网关的设备
         for device_sn, mapped_gateway_sn in device_to_gateway_mapping.items():
-            if mapped_gateway_sn == gateway_sn:
+            if mapped_gateway_sn.lower() == gateway_sn.lower():
                 devices_to_remove.append(device_sn)
         
         # 不从映射表中移除这些设备，而是保留映射关系

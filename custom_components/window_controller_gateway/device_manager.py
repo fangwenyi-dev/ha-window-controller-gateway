@@ -557,12 +557,14 @@ class WindowControllerDeviceManager:
                     _LOGGER.info("迁移模式：设备 %s 已从手动删除列表中移除", device_sn)
                 
                 # 更新设备在 self.devices 中的信息
+                # P2 修复：使用与正常添加路径一致的设备结构（status/attributes），
+                # 而非 online/last_update，避免其他代码访问不存在的键
                 self.devices[device_sn] = {
                     "sn": device_sn,
                     "name": device_name_with_sn,
                     "type": device_type,
-                    "online": True,
-                    "last_update": time.time()
+                    "status": "connected",
+                    "attributes": {}
                 }
                 _LOGGER.info("已更新设备 %s 在设备管理器中的信息", device_sn)
                 
@@ -578,7 +580,7 @@ class WindowControllerDeviceManager:
                 device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
                 if device_sn in device_to_gateway_mapping:
                     existing_gateway_sn = device_to_gateway_mapping[device_sn]
-                    if existing_gateway_sn != self.gateway_sn:
+                    if existing_gateway_sn.lower() != self.gateway_sn.lower():
                         _LOGGER.warning("设备 %s 已经添加到网关 %s 中，不允许添加到当前网关 %s", 
                                     device_sn, existing_gateway_sn, self.gateway_sn)
                         return None
@@ -784,17 +786,13 @@ class WindowControllerDeviceManager:
             # 通知MQTT处理器，设备已被删除
             # 这样当设备重新被发现时，可以重新添加
             try:
-                from .mqtt_handler import WindowControllerMQTTHandler
-                # 查找与当前网关关联的MQTT处理器
-                for entry_id, data in self.hass.data[DOMAIN].items():
-                    if isinstance(data, dict) and data.get("gateway_sn") == self.gateway_sn:
-                        if "mqtt_handler" in data:
-                            mqtt_handler = data["mqtt_handler"]
-                            # 触发设备发现，确保设备可以重新添加
-                            self.hass.create_task(mqtt_handler.trigger_discovery())
-                            break
-            except ImportError as e:
-                _LOGGER.error("导入MQTT处理器失败: %s", e)
+                # P2 修复：使用 hass.async_create_task（hass.create_task 已弃用），
+                # 并直接通过 entry_id 查找 MQTT 处理器，避免不必要的迭代
+                gateway_data = self.hass.data[DOMAIN].get(self.entry.entry_id)
+                if gateway_data and isinstance(gateway_data, dict):
+                    mqtt_handler = gateway_data.get("mqtt_handler")
+                    if mqtt_handler:
+                        self.hass.async_create_task(mqtt_handler.trigger_discovery())
             except KeyError as e:
                 _LOGGER.error("访问DOMAIN数据失败: %s", e)
             except Exception as e:
@@ -904,10 +902,17 @@ class WindowControllerDeviceManager:
     async def cleanup(self):
         """清理资源"""
         _LOGGER.info("清理设备管理器资源")
-        # 取消所有后台任务
+        # P1 修复：取消并 await 所有后台任务，避免任务在 cleanup 后访问已清理的状态
         for task in self._background_tasks:
             if not task.done():
                 task.cancel()
+        for task in self._background_tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                _LOGGER.debug("后台任务取消异常: %s", e)
         self._background_tasks.clear()
         self.devices.clear()
         self._device_registry_cache = None
@@ -960,7 +965,7 @@ class WindowControllerDeviceManager:
                 # 检查配置条目是否存在
                 old_entry_exists = False
                 for entry in self.hass.config_entries.async_entries(DOMAIN):
-                    if entry.data.get(CONF_GATEWAY_SN) == old_gateway_sn:
+                    if entry.data.get(CONF_GATEWAY_SN, "").lower() == old_gateway_sn.lower():
                         old_entry_exists = True
                         break
                 
@@ -1013,8 +1018,9 @@ class WindowControllerDeviceManager:
         """检查网关是否在线"""
         try:
             # 查找网关的MQTT处理器
+            gateway_sn_lower = gateway_sn.lower()
             for entry_id, data in self.hass.data[DOMAIN].items():
-                if isinstance(data, dict) and data.get("gateway_sn") == gateway_sn:
+                if isinstance(data, dict) and data.get("gateway_sn", "").lower() == gateway_sn_lower:
                     if "mqtt_handler" in data:
                         mqtt_handler = data["mqtt_handler"]
                         # 检查连接状态
@@ -1032,8 +1038,10 @@ class WindowControllerDeviceManager:
         # 从设备到网关映射表中统计
         if DEVICE_TO_GATEWAY_MAPPING in self.hass.data[DOMAIN]:
             device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
+            # P1 修复：使用大小写不敏感比较，与 add_device/remove_device 保持一致
+            gateway_sn_lower = gateway_sn.lower()
             for device_sn, mapped_gateway_sn in device_to_gateway_mapping.items():
-                if mapped_gateway_sn == gateway_sn:
+                if mapped_gateway_sn.lower() == gateway_sn_lower:
                     count += 1
         
         return count
@@ -1055,7 +1063,7 @@ class WindowControllerDeviceManager:
                 
                 # 检查设备是否关联到旧网关
                 if device_sn and device_sn != old_gateway_sn:
-                    if hasattr(device, 'via_device') and device.via_device and device.via_device[1] == old_gateway_sn:
+                    if hasattr(device, 'via_device') and device.via_device and device.via_device[1].lower() == old_gateway_sn.lower():
                         # 这里可以添加更详细的兼容性检查
                         # 例如：检查设备型号、固件版本等
                         pass
@@ -1081,7 +1089,7 @@ class WindowControllerDeviceManager:
                 
                 # 检查设备是否关联到指定网关
                 if device_sn and device_sn != gateway_sn:
-                    if hasattr(device, 'via_device') and device.via_device and device.via_device[1] == gateway_sn:
+                    if hasattr(device, 'via_device') and device.via_device and device.via_device[1].lower() == gateway_sn.lower():
                         # 检查设备SN格式（允许字母和数字）
                         import re
                         if not re.match(r'^[a-zA-Z0-9]+$', device_sn) or len(device_sn) < 10:
@@ -1108,7 +1116,7 @@ class WindowControllerDeviceManager:
                 
                 # 检查设备是否关联到指定网关
                 if device_sn and device_sn != gateway_sn:
-                    if hasattr(device, 'via_device') and device.via_device and device.via_device[1] == gateway_sn:
+                    if hasattr(device, 'via_device') and device.via_device and device.via_device[1].lower() == gateway_sn.lower():
                         # 检查设备是否已被手动删除
                         if device_sn in self._manually_removed_devices:
                             manually_removed_devices.append(device_sn)
@@ -1145,7 +1153,7 @@ class WindowControllerDeviceManager:
         # 1. 检查配置条目是否存在
         old_entry_exists = False
         for entry in self.hass.config_entries.async_entries(DOMAIN):
-            if entry.data.get(CONF_GATEWAY_SN) == old_gateway_sn:
+            if entry.data.get(CONF_GATEWAY_SN, "").lower() == old_gateway_sn.lower():
                 old_entry_exists = True
                 break
         
@@ -1223,8 +1231,8 @@ class WindowControllerDeviceManager:
                 _LOGGER.warning("设备在注册表中未找到: %s，跳过", device_sn)
                 continue
             
-            # 检查设备是否已经关联到新网关
-            if hasattr(device, 'via_device') and device.via_device and device.via_device[1] == new_gateway_sn:
+            # 检查设备是否已经关联到新网关（大小写不敏感）
+            if hasattr(device, 'via_device') and device.via_device and device.via_device[1].lower() == new_gateway_sn.lower():
                 _LOGGER.debug("设备 %s 已经关联到新网关，跳过", device_sn)
                 migrated_devices.append(device_sn)
                 continue
@@ -1368,7 +1376,7 @@ class WindowControllerDeviceManager:
         migrated_devices = []
         for device in device_registry.devices.values():
             if hasattr(device, 'via_device') and device.via_device:
-                if device.via_device[1] == new_gateway_sn:
+                if device.via_device[1].lower() == new_gateway_sn.lower():
                     migrated_devices.append(device)
         
         _LOGGER.info("新网关关联了 %d 个设备", len(migrated_devices))
@@ -1456,7 +1464,7 @@ class WindowControllerDeviceManager:
             if device_sn and device_sn != gateway_sn:
                 # 检查设备是否关联到指定网关
                 via_device_info = getattr(device, 'via_device', None)
-                if via_device_info and via_device_info[1] == gateway_sn:
+                if via_device_info and via_device_info[1].lower() == gateway_sn.lower():
                     gateway_devices.append(device_sn)
                     _LOGGER.info("找到关联到网关 %s 的设备: %s", gateway_sn, device_sn)
         
@@ -1545,7 +1553,7 @@ class WindowControllerDeviceManager:
             old_gateway_devices = await self._get_gateway_devices_from_registry(old_gateway_sn)
             
             for device_sn in old_gateway_devices:
-                if device_sn in device_to_gateway_mapping and device_to_gateway_mapping[device_sn] == old_gateway_sn:
+                if device_sn in device_to_gateway_mapping and device_to_gateway_mapping[device_sn].lower() == old_gateway_sn.lower():
                     del device_to_gateway_mapping[device_sn]
                     _LOGGER.info("已清理设备 %s 的旧网关映射", device_sn)
         
@@ -1636,7 +1644,7 @@ class WindowControllerDeviceManager:
                 # 只有当设备有此集成的标识符且不是网关本身时才处理
                 if device_sn and device_sn != old_gateway_sn:
                     # 检查设备是否关联到当前网关
-                    if hasattr(device, 'via_device') and device.via_device and device.via_device[1] == self.gateway_sn:
+                    if hasattr(device, 'via_device') and device.via_device and device.via_device[1].lower() == self.gateway_sn.lower():
                         # 恢复设备关联到旧网关
                         updated_device = device_registry.async_get_or_create(
                             config_entry_id=self.entry.entry_id,
@@ -1730,7 +1738,7 @@ class WindowControllerDeviceManager:
                     break
             
             if has_domain_identifier and device_sn and device_sn != old_gateway_sn:
-                if hasattr(device, 'via_device') and device.via_device and device.via_device[1] == old_gateway_sn:
+                if hasattr(device, 'via_device') and device.via_device and device.via_device[1].lower() == old_gateway_sn.lower():
                     total_devices += 1
         
         migrated_count = 0
@@ -1750,7 +1758,7 @@ class WindowControllerDeviceManager:
             # 只有当设备有此集成的标识符且不是网关本身时才处理
             if has_domain_identifier and device_sn and device_sn != old_gateway_sn:
                 # 检查设备是否关联到旧网关
-                if hasattr(device, 'via_device') and device.via_device and device.via_device[1] == old_gateway_sn:
+                if hasattr(device, 'via_device') and device.via_device and device.via_device[1].lower() == old_gateway_sn.lower():
                     _LOGGER.info("找到关联到旧网关的设备: %s", device_sn)
                     old_devices.append(device_sn)
                     
@@ -1771,7 +1779,7 @@ class WindowControllerDeviceManager:
                     )
                     
                     # 验证设备关联是否正确更新
-                    if hasattr(updated_device, 'via_device') and updated_device.via_device and updated_device.via_device[1] == self.gateway_sn:
+                    if hasattr(updated_device, 'via_device') and updated_device.via_device and updated_device.via_device[1].lower() == self.gateway_sn.lower():
                         _LOGGER.info("设备 %s 已成功迁移到新网关", device_sn)
                         migrated_devices.append(device_sn)
                         backup['migrated_devices'].append(device_sn)
@@ -1784,34 +1792,34 @@ class WindowControllerDeviceManager:
                         
                         # 将设备添加到当前网关的设备列表中（使用 force=True 跳过检查）
                         await self.add_device(device_sn, device.name, force=True)
-                    
-                    # 更新迁移计数并发送进度通知
-                    migrated_count += 1
-                    
-                    # 减少通知频率，每5个设备或每20%进度发送一次通知
-                    # 检查是否需要发送进度通知
-                    should_notify = self._should_notify_progress(migrated_count, total_devices)
-                    
-                    if should_notify:
-                        try:
-                            progress_percent = (migrated_count / total_devices) * 100 if total_devices > 0 else 100
-                            await self.hass.services.async_call(
-                                "persistent_notification",
-                                "create",
-                                {
-                                    "title": "设备迁移进度",
-                                    "message": (
-                                        f"迁移进度: {migrated_count}/{total_devices} ({progress_percent:.1f}%)\n"
-                                        f"最新迁移: {device.name} ({device_sn[-6:]})\n"
-                                        f"旧网关: {old_gateway_sn[-6:]} \n"
-                                        f"新网关: {self.gateway_sn[-6:]}"
-                                    ),
-                                    "notification_id": "window_controller_migration"
-                                },
-                                blocking=False
-                            )
-                        except Exception as notify_error:
-                            _LOGGER.warning("发送进度通知失败: %s", notify_error)
+                        
+                        # 更新迁移计数并发送进度通知（仅在成功迁移时递增）
+                        migrated_count += 1
+                        
+                        # 减少通知频率，每5个设备或每20%进度发送一次通知
+                        # 检查是否需要发送进度通知
+                        should_notify = self._should_notify_progress(migrated_count, total_devices)
+                        
+                        if should_notify:
+                            try:
+                                progress_percent = (migrated_count / total_devices) * 100 if total_devices > 0 else 100
+                                await self.hass.services.async_call(
+                                    "persistent_notification",
+                                    "create",
+                                    {
+                                        "title": "设备迁移进度",
+                                        "message": (
+                                            f"迁移进度: {migrated_count}/{total_devices} ({progress_percent:.1f}%)\n"
+                                            f"最新迁移: {device.name} ({device_sn[-6:]})\n"
+                                            f"旧网关: {old_gateway_sn[-6:]} \n"
+                                            f"新网关: {self.gateway_sn[-6:]}"
+                                        ),
+                                        "notification_id": "window_controller_migration"
+                                    },
+                                    blocking=False
+                                )
+                            except Exception as notify_error:
+                                _LOGGER.warning("发送进度通知失败: %s", notify_error)
                 else:
                     _LOGGER.warning("设备 %s 未成功迁移到新网关", device_sn)
         
@@ -1839,7 +1847,9 @@ class WindowControllerDeviceManager:
                     _LOGGER.info("开始清理设备 %s 的旧网关实体", device_sn)
                     
                     # 查找与该设备关联的所有实体
-                    for entity_id, entity_entry in entity_registry.entities.items():
+                    # P0 修复：使用 list() 创建副本再遍历，避免在遍历 entity_registry.entities 时
+                    # 调用 async_remove 修改字典导致 RuntimeError: dictionary changed size during iteration
+                    for entity_id, entity_entry in list(entity_registry.entities.items()):
                         if entity_entry.device_id:
                             # 检查实体是否属于当前设备
                             device = device_registry.async_get(entity_entry.device_id)
@@ -1889,9 +1899,11 @@ class WindowControllerDeviceManager:
         if current_count % 5 == 0:
             return True
         
-        # 每20%进度发送一次通知
-        progress_percent = (current_count / total_count) * 100
-        if progress_percent % 20 <= 1:  # 允许1%的误差
+        # 每20%进度边界发送一次通知（使用整数除法判断是否跨越边界）
+        # 例如 total=7: 20%边界在 2/7, 4/7（近似），此处用整数倍数检测
+        prev_percent = ((current_count - 1) * 100) // total_count
+        curr_percent = (current_count * 100) // total_count
+        if prev_percent // 20 != curr_percent // 20:
             return True
         
         # 迁移完成时发送通知

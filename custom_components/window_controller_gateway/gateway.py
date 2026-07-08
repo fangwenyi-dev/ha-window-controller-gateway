@@ -129,7 +129,6 @@ class GatewayPairingButton(ButtonEntity):
         self.gateway_sn = gateway_sn
         self.gateway_name = gateway_name
         self.entry_id = entry_id
-        self._pairing_timeout_handle = None
         self._attr_name = "配对"
         # unique_id基于网关SN，确保同一网关只有一个配对按钮
         self._attr_unique_id = f"{gateway_sn}_pairing"
@@ -149,9 +148,11 @@ class GatewayPairingButton(ButtonEntity):
     async def async_press(self) -> None:
         """按下按键，触发配对模式"""
         try:
-            if self._pairing_timeout_handle:
-                self._pairing_timeout_handle.cancel()
-                self._pairing_timeout_handle = None
+            # P1 修复：使用 mqtt_handler.pairing_timeout_handle 统一管理配对超时，
+            # 与 __init__.py 的 handle_start_pairing 服务共享同一个句柄。
+            if self.mqtt_handler.pairing_timeout_handle:
+                self.mqtt_handler.pairing_timeout_handle.cancel()
+                self.mqtt_handler.pairing_timeout_handle = None
 
             # 使用命令管理器发送，统一处理命令ID、连接检查等
             success = await self.mqtt_handler.send_command(self.gateway_sn, "start_pairing")
@@ -164,7 +165,7 @@ class GatewayPairingButton(ButtonEntity):
             self.mqtt_handler._notify_status_change()
             
             # 更新网关状态
-            self.hass.create_task(
+            self.hass.async_create_task(
                 self.device_manager.update_gateway_status("pairing")
             )
             
@@ -173,16 +174,16 @@ class GatewayPairingButton(ButtonEntity):
             
             # 设置定时器，在配对超时后恢复状态
             def pairing_timeout():
-                self._pairing_timeout_handle = None
+                self.mqtt_handler.pairing_timeout_handle = None
                 self.mqtt_handler.pairing_active = False
                 self.mqtt_handler._notify_status_change()
-                self.hass.create_task(
+                self.hass.async_create_task(
                     self.device_manager.update_gateway_status("online" if self.mqtt_handler.connected else "offline")
                 )
                 _LOGGER.info("配对模式已超时，恢复正常状态")
             
             # 延迟执行超时回调
-            self._pairing_timeout_handle = self.hass.loop.call_later(GATEWAY_PAIRING_TIMEOUT, pairing_timeout)
+            self.mqtt_handler.pairing_timeout_handle = self.hass.loop.call_later(GATEWAY_PAIRING_TIMEOUT, pairing_timeout)
         except Exception as e:
             _LOGGER.error("触发网关配对模式失败: %s", e)
 

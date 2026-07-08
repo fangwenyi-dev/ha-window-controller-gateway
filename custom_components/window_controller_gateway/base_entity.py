@@ -62,11 +62,11 @@ class WindowControllerBaseEntity:
             MQTT处理器实例
         """
         current_gateway_sn = self.get_current_gateway_sn()
-        if current_gateway_sn != self.gateway_sn:
+        if current_gateway_sn.lower() != self.gateway_sn.lower():
             if current_gateway_sn in self._mqtt_handler_cache:
                 return self._mqtt_handler_cache[current_gateway_sn]
             for entry_id, data in self.hass.data[DOMAIN].items():
-                if isinstance(data, dict) and data.get("gateway_sn") == current_gateway_sn:
+                if isinstance(data, dict) and data.get("gateway_sn", "").lower() == current_gateway_sn.lower():
                     if "mqtt_handler" in data:
                         self._mqtt_handler_cache[current_gateway_sn] = data["mqtt_handler"]
                         return data["mqtt_handler"]
