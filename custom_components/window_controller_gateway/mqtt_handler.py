@@ -697,10 +697,9 @@ class WindowControllerMQTTHandler:
     async def check_connection(self):
         """检查MQTT连接状态
 
-        发送标准 $SH 协议的 002 发现命令，既能验证 MQTT broker 连通性，
-        又能触发网关上报状态，保持网关活跃。
-        网关的 connected 状态由 handle_gateway_response 收到网关消息时设为 True，
-        由 _check_gateway_timeout 超时后设为 False。
+        发送标准 $SH 协议的 002 发现命令验证 MQTT broker 连通性。
+        publish 成功即认为连接正常（与原始行为一致），网关离线检测
+        由 _check_gateway_timeout 超时机制负责。
         """
         try:
             # 使用标准 $SH 协议格式发送发现命令
@@ -724,11 +723,19 @@ class WindowControllerMQTTHandler:
                 1,
                 False
             )
-            _LOGGER.debug("MQTT broker 连通性检查通过（网关 %s）", self.gateway_sn)
+
+            # publish 成功即认为 MQTT broker 可达，标记为在线
+            if not self.connected:
+                self.connected = True
+                _LOGGER.debug("MQTT连接状态正常")
+                self._notify_status_change()
+
+                self._schedule_async_task(
+                    self.device_manager.update_gateway_status("online")
+                )
         except Exception as e:
             _LOGGER.error("MQTT连接检查失败: %s", e)
 
-            # 只有在 publish 失败时才标记离线（说明 MQTT broker 不可达）
             if self.connected:
                 self.connected = False
                 self._notify_status_change()

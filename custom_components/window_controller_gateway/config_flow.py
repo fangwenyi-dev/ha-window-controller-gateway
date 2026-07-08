@@ -2,6 +2,7 @@
 import voluptuous as vol
 import re
 import logging
+import asyncio
 from typing import Any, Dict, Optional
 
 from homeassistant import config_entries
@@ -15,7 +16,9 @@ from .const import (
     CONF_GATEWAY_SN, 
     CONF_GATEWAY_NAME, 
     DEFAULT_GATEWAY_NAME,
+    DEVICE_SETUP_DELAY
 )
+from .mqtt_handler import WindowControllerMQTTHandler
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,6 +27,34 @@ def validate_gateway_sn(sn: str) -> bool:
     if not sn or len(sn) < 10:
         return False
     return bool(re.match(r'^[a-zA-Z0-9]+$', sn))
+
+class MockDeviceManager:
+    """用于连接测试的模拟设备管理器"""
+    def __init__(self):
+        self._manually_removed_devices = set()
+    
+    async def update_gateway_status(self, status):
+        pass
+    
+    async def update_device_status(self, device_sn, status, attributes=None):
+        pass
+    
+    def get_gateway_info(self):
+        return {"name": "Test Gateway"}
+    
+    def get_all_devices(self):
+        return []
+    
+    def get_device(self, device_sn):
+        return None
+    
+    async def add_device(self, device_sn, device_name, device_type=None, force=False, is_manual_pairing=False):
+        _LOGGER.debug("模拟添加设备: %s, 名称: %s, force: %s, is_manual_pairing: %s", device_sn, device_name, force, is_manual_pairing)
+        return device_sn
+    
+    def is_device_manually_removed(self, device_sn):
+        return device_sn in self._manually_removed_devices
+
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Configuration flow handler class"""
@@ -49,15 +80,23 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(gateway_sn)
                 self._abort_if_unique_id_configured()
 
-                # 不做连接性测试，直接创建配置条目
-                # 网关的发现和连接在 async_setup_entry 中自动完成
-                return self.async_create_entry(
-                    title=gateway_name,
-                    data={
-                        CONF_GATEWAY_SN: gateway_sn,
-                        CONF_GATEWAY_NAME: gateway_name
-                    }
-                )
+                # 测试网关连接性
+                try:
+                    connected = await self._test_gateway_connectivity(gateway_sn)
+                    if not connected:
+                        errors["base"] = "cannot_connect"
+                except Exception:
+                    errors["base"] = "cannot_connect"
+
+                if not errors:
+                    # 创建配置条目
+                    return self.async_create_entry(
+                        title=gateway_name,
+                        data={
+                            CONF_GATEWAY_SN: gateway_sn,
+                            CONF_GATEWAY_NAME: gateway_name
+                        }
+                    )
 
         # Configuration form
         default_sn = gateway_sn_from_context or (user_input.get(CONF_GATEWAY_SN, "") if user_input else "")
@@ -247,6 +286,48 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "device_count": self.context.get("device_count", "未知")
             }
         )
+
+    async def _test_gateway_connectivity(self, gateway_sn: str) -> bool:
+        """Test gateway connectivity"""
+        _LOGGER.info("Testing gateway connectivity for SN: %s", gateway_sn)
+
+        mqtt_handler = None
+        try:
+            # Check if MQTT integration is available
+            if not self.hass.data.get("mqtt"):
+                _LOGGER.error("MQTT integration not available")
+                return False
+
+            mock_device_manager = MockDeviceManager()
+            mqtt_handler = WindowControllerMQTTHandler(self.hass, gateway_sn, mock_device_manager)
+
+            # Setup MQTT handler
+            if not await mqtt_handler.setup():
+                _LOGGER.error("Failed to setup MQTT handler")
+                return False
+
+            # Test connection
+            connected = await mqtt_handler.check_connection()
+
+            # Give the gateway a moment to respond
+            await asyncio.sleep(DEVICE_SETUP_DELAY)
+
+            if connected:
+                _LOGGER.info("Gateway connectivity test passed")
+            else:
+                _LOGGER.warning("Gateway connectivity test failed")
+
+            return connected
+
+        except Exception as e:
+            _LOGGER.error("Error testing gateway connectivity: %s", e)
+            return False
+        finally:
+            if mqtt_handler:
+                try:
+                    await mqtt_handler.cleanup()
+                except Exception as cleanup_e:
+                    _LOGGER.debug("MQTT handler cleanup error: %s", cleanup_e)
 
     @staticmethod
     @callback
