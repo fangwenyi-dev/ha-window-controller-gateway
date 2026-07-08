@@ -300,7 +300,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
 
         try:
             success = await target_device_manager.transfer_device(
-                device_sn, old_gateway_sn, new_gateway_sn
+                device_sn, new_gateway_sn
             )
             if success:
                 _LOGGER.info("设备 %s 已从网关 %s 转移到网关 %s", device_sn, old_gateway_sn, new_gateway_sn)

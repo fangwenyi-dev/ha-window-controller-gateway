@@ -422,27 +422,56 @@ class WindowControllerDeviceManager:
         except Exception as e:
             _LOGGER.error("创建设备冲突通知失败: %s", e)
 
-    async def transfer_device(self, device_sn: str, old_gateway_sn: str, new_gateway_sn: str) -> bool:
-        """转移单个设备到当前网关
+    async def transfer_device(self, device_sn: str, new_gateway_sn: str) -> bool:
+        """将设备从一个网关转移到另一个网关
 
         Args:
-            device_sn: 设备序列号
-            old_gateway_sn: 旧网关序列号
-            new_gateway_sn: 新网关序列号（应为当前网关）
+            device_sn: 要转移的设备SN
+            new_gateway_sn: 目标网关SN
 
         Returns:
             bool: 转移是否成功
         """
-        _LOGGER.info("开始转移设备 %s: %s -> %s", device_sn, old_gateway_sn, new_gateway_sn)
+        _LOGGER.info("开始转移设备 %s 到网关 %s", device_sn, new_gateway_sn)
 
-        # 1. 更新设备到网关映射表
-        if DEVICE_TO_GATEWAY_MAPPING in self.hass.data[DOMAIN]:
-            device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
-            device_to_gateway_mapping[device_sn] = new_gateway_sn
-            _LOGGER.info("已更新设备 %s 的网关映射到 %s", device_sn, new_gateway_sn)
-            self._save_device_to_gateway_mapping()
+        # 1. 检查设备是否在映射表中，获取旧网关SN
+        if DEVICE_TO_GATEWAY_MAPPING not in self.hass.data[DOMAIN]:
+            _LOGGER.error("设备到网关映射表不存在")
+            return False
 
-        # 2. 从旧网关的设备管理器中移除设备（如果旧网关仍在线）
+        device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
+
+        if device_sn not in device_to_gateway_mapping:
+            _LOGGER.error("设备 %s 不在映射表中", device_sn)
+            return False
+
+        old_gateway_sn = device_to_gateway_mapping[device_sn]
+
+        # 大小写不敏感比较
+        if old_gateway_sn.lower() == new_gateway_sn.lower():
+            _LOGGER.warning("设备 %s 已经在网关 %s 中，无需转移", device_sn, new_gateway_sn)
+            return False
+
+        # 2. 检查目标网关是否存在
+        target_entry_id = None
+        old_entry_id = None
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            entry_gw_sn = entry.data.get(CONF_GATEWAY_SN, "")
+            if entry_gw_sn.lower() == new_gateway_sn.lower():
+                target_entry_id = entry.entry_id
+            if entry_gw_sn.lower() == old_gateway_sn.lower():
+                old_entry_id = entry.entry_id
+
+        if not target_entry_id:
+            _LOGGER.error("目标网关 %s 不存在", new_gateway_sn)
+            return False
+
+        # 3. 更新设备到网关映射表
+        device_to_gateway_mapping[device_sn] = new_gateway_sn
+        self._save_device_to_gateway_mapping()
+        _LOGGER.info("已更新设备 %s 的网关映射: %s -> %s", device_sn, old_gateway_sn, new_gateway_sn)
+
+        # 4. 从旧网关的设备管理器中移除设备（如果旧网关仍在线）
         for entry_id, data in self.hass.data[DOMAIN].items():
             if isinstance(data, dict) and data.get("gateway_sn", "").lower() == old_gateway_sn.lower():
                 old_device_manager = data.get("device_manager")
@@ -452,16 +481,64 @@ class WindowControllerDeviceManager:
                         _LOGGER.info("已从旧网关 %s 的设备列表中移除设备 %s", old_gateway_sn, device_sn)
                 break
 
-        # 3. 从手动删除列表中移除（如果有）
+        # 5. 从手动删除列表中移除（如果有）
         if device_sn in self._manually_removed_devices:
             self._manually_removed_devices.discard(device_sn)
             self._save_manually_removed_devices()
+            _LOGGER.info("设备 %s 已从手动删除列表中移除", device_sn)
 
-        # 4. 添加设备到当前网关（使用 force=True 跳过冲突检查）
-        device_name = get_device_display_name(new_gateway_sn, device_sn)
-        await self.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER, force=True)
+        # 6. 更新设备注册表中的关联
+        try:
+            device_registry = await self._get_device_registry()
+            target_entry = self.hass.config_entries.async_get_entry(target_entry_id)
+            if target_entry:
+                device_registry.async_get_or_create(
+                    config_entry_id=target_entry_id,
+                    identifiers={(DOMAIN, device_sn)},
+                    manufacturer=MANUFACTURER,
+                    model="开窗器",
+                    via_device=(DOMAIN, new_gateway_sn)
+                )
+                _LOGGER.info("已更新设备 %s 的注册表关联到网关 %s", device_sn, new_gateway_sn)
+        except Exception as e:
+            _LOGGER.error("更新设备注册表失败: %s", e)
 
-        # 5. 清理冲突通知（如果有）
+        # 7. 更新实体关联到目标网关的配置条目
+        try:
+            entity_registry = await self._get_entity_registry()
+            device_registry = await self._get_device_registry()
+            device = device_registry.async_get_device(identifiers={(DOMAIN, device_sn)})
+            target_entry = self.hass.config_entries.async_get_entry(target_entry_id)
+
+            if device and target_entry:
+                for entity_id, entity_entry in list(entity_registry.entities.items()):
+                    if entity_entry.device_id == device.id:
+                        if entity_entry.config_entry_id != target_entry_id:
+                            entity_registry.async_get_or_create(
+                                domain=entity_entry.domain,
+                                platform=DOMAIN,
+                                unique_id=entity_entry.unique_id,
+                                config_entry=target_entry,
+                                device_id=device.id,
+                            )
+                            _LOGGER.debug("已更新实体 %s 的配置条目关联", entity_id)
+        except Exception as e:
+            _LOGGER.error("更新实体关联失败: %s", e)
+
+        # 8. 添加设备到目标网关（使用 force=True 跳过冲突检查）
+        target_device_manager = None
+        for entry_id, data in self.hass.data[DOMAIN].items():
+            if isinstance(data, dict) and data.get("gateway_sn", "").lower() == new_gateway_sn.lower():
+                target_device_manager = data.get("device_manager")
+                break
+
+        if target_device_manager:
+            device_name = get_device_display_name(new_gateway_sn, device_sn)
+            await target_device_manager.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER, force=True)
+        else:
+            _LOGGER.warning("未找到目标网关 %s 的设备管理器，设备将在网关重载后添加", new_gateway_sn)
+
+        # 9. 清理冲突通知（如果有）
         try:
             await self.hass.services.async_call(
                 "persistent_notification",
@@ -470,9 +547,9 @@ class WindowControllerDeviceManager:
                 blocking=False
             )
         except Exception:
-            pass
+            _LOGGER.debug("清除冲突通知失败（可能不存在）")
 
-        # 6. 发送转移成功事件
+        # 10. 发送转移成功事件
         self.hass.bus.async_fire(
             f"{DOMAIN}_device_transferred",
             {
@@ -483,8 +560,17 @@ class WindowControllerDeviceManager:
             }
         )
 
-        _LOGGER.info("设备 %s 转移成功: %s -> %s", device_sn, old_gateway_sn, new_gateway_sn)
+        # 11. 重新加载源网关和目标网关，确保实体正确显示
+        try:
+            if old_entry_id and old_entry_id != target_entry_id:
+                await self.hass.config_entries.async_reload(old_entry_id)
+            await self.hass.config_entries.async_reload(target_entry_id)
+        except Exception as e:
+            _LOGGER.error("重新加载网关失败: %s", e)
+
+        _LOGGER.info("设备 %s 转移完成: %s -> %s", device_sn, old_gateway_sn, new_gateway_sn)
         return True
+
 
     def _format_device_name(self, device_sn: str, device_name: str) -> str:
         """格式化设备名称，如果设备名称不包含SN后4位，则添加
@@ -686,15 +772,8 @@ class WindowControllerDeviceManager:
                 
                 return device_sn
             
-            # 检查设备是否属于当前网关（迁移时跳过此检查）
-            if not force and DEVICE_TO_GATEWAY_MAPPING in self.hass.data[DOMAIN]:
-                device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
-                if device_sn in device_to_gateway_mapping:
-                    existing_gateway_sn = device_to_gateway_mapping[device_sn]
-                    if existing_gateway_sn.lower() != self.gateway_sn.lower():
-                        _LOGGER.warning("设备 %s 已经添加到网关 %s 中，不允许添加到当前网关 %s", 
-                                    device_sn, existing_gateway_sn, self.gateway_sn)
-                        return None
+            # 注意：此处无需再次检查设备归属，上方的智能冲突检测已处理所有情况
+            # 如果执行到这里，说明设备属于当前网关（或已自动转移），可以安全更新
             
             # 更新设备类型为开窗器（保留用户自定义的设备名称）
             self.devices[device_sn]["type"] = device_type
