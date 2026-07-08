@@ -785,20 +785,22 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # 保存当前的持久化数据
     await save_persistent_data(hass)
     
-    # 保留设备到网关映射表，以便重新添加网关时快速恢复设备
-    # 不删除映射表，只是标记设备为未关联状态
+    # 清理设备到网关映射表中属于该网关的映射关系
+    # 否则这些设备会被永久锁死在已删除的网关上，无法被新网关发现和添加
     if DOMAIN in hass.data and DEVICE_TO_GATEWAY_MAPPING in hass.data[DOMAIN]:
         device_to_gateway_mapping = hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
         devices_to_remove = []
         
-        # 找出所有映射到该网关的设备
-        for device_sn, mapped_gateway_sn in device_to_gateway_mapping.items():
+        # 找出所有映射到该网关的设备（大小写不敏感）
+        for device_sn, mapped_gateway_sn in list(device_to_gateway_mapping.items()):
             if mapped_gateway_sn.lower() == gateway_sn.lower():
                 devices_to_remove.append(device_sn)
+                del device_to_gateway_mapping[device_sn]
         
-        # 不从映射表中移除这些设备，而是保留映射关系
-        # 这样重新添加网关时可以快速恢复设备
-        _LOGGER.info("保留 %d 个设备的映射关系，以便快速恢复", len(devices_to_remove))
+        _LOGGER.info("已清理 %d 个设备的网关映射关系（网关 %s 已删除）", len(devices_to_remove), gateway_sn)
+        
+        # 保存更新后的持久化数据
+        await save_persistent_data(hass)
 
 
 async def _background_initialization(mqtt_handler):
