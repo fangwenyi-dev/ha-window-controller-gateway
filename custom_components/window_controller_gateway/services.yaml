@@ -110,3 +110,22 @@ migrate_devices:
       default: false
       selector:
         boolean:
+
+transfer_device:
+  name: 转移设备
+  description: 将单个设备从一个网关转移到另一个网关
+  fields:
+    device_id:
+      name: 设备ID
+      description: 要转移的设备ID
+      required: true
+      example: "500534380259"
+      selector:
+        text:
+    new_gateway_sn:
+      name: 目标网关SN
+      description: 目标网关的序列号
+      required: true
+      example: "100122501203"
+      selector:
+        text:

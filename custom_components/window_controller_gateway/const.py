@@ -22,6 +22,7 @@ SERVICE_START_PAIRING: Final = "start_pairing"
 SERVICE_REFRESH_DEVICES: Final = "refresh_devices"
 SERVICE_MIGRATE_DEVICES: Final = "migrate_devices"
 SERVICE_RENAME_DEVICE: Final = "rename_device"
+SERVICE_TRANSFER_DEVICE: Final = "transfer_device"
 
 # ==================== 属性相关 ====================
 ATTR_DEVICE_SN: Final = "device_sn"
