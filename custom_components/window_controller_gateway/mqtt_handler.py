@@ -79,18 +79,38 @@ class WindowControllerMQTTHandler:
     def _schedule_async_task(self, coro):
         """安全地将异步任务调度到主事件循环
 
-        在MQTT回调中正确调度协程到HA主事件循环执行。
-        使用 hass.async_create_task 调度，HA 会自动记录未捕获的异常，
-        避免异常被静默吞没。如果事件循环未运行，则关闭协程并跳过。
+        MQTT 回调可能在 paho-mqtt 网络线程中被调用，而非事件循环线程。
+        - 在事件循环内：使用 hass.async_create_task（线程安全，HA 自动记录异常）
+        - 在线程中：使用 asyncio.run_coroutine_threadsafe（线程安全），
+          并通过 done_callback 记录未捕获异常，避免静默吞没。
         """
         try:
             loop = self.hass.loop
-            if loop.is_running():
-                # 优先使用 hass.async_create_task，它会自动记录任务中的未捕获异常
-                self.hass.async_create_task(coro)
-            else:
+            if not loop.is_running():
                 _LOGGER.warning("事件循环未运行，跳过任务调度")
                 coro.close()
+                return
+
+            # 检测当前是否在事件循环线程中
+            try:
+                current_loop = asyncio.get_running_loop()
+                in_event_loop = current_loop is loop
+            except RuntimeError:
+                in_event_loop = False
+
+            if in_event_loop:
+                self.hass.async_create_task(coro)
+            else:
+                future = asyncio.run_coroutine_threadsafe(coro, loop)
+
+                def _log_exception(fut):
+                    """记录任务中的未捕获异常"""
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        _LOGGER.error("异步任务执行失败: %s", e, exc_info=True)
+
+                future.add_done_callback(_log_exception)
         except RuntimeError as e:
             _LOGGER.error("调度异步任务失败: %s", e)
             coro.close()
