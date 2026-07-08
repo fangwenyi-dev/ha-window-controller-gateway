@@ -262,53 +262,6 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
         except Exception as e:
             _LOGGER.error("检查网关状态失败: %s", e)
 
-    async def handle_transfer_device(call: ServiceCall) -> None:
-        """处理转移单个设备服务调用"""
-        device_id = call.data.get("device_id")
-        new_gateway_sn = call.data.get("new_gateway_sn")
-
-        if not device_id or not new_gateway_sn:
-            _LOGGER.error("转移设备服务调用失败：参数不完整")
-            return
-
-        _LOGGER.info("收到转移设备请求，设备ID: %s，目标网关: %s", device_id, new_gateway_sn)
-
-        # 通过 device_id 查找设备
-        device, old_gateway_data, old_gateway_sn = find_device_by_device_id(hass, device_id)
-        if not device:
-            _LOGGER.error("未找到设备ID %s 对应的设备", device_id)
-            return
-
-        device_sn = device["sn"]
-
-        # 查找目标网关
-        target_entry = None
-        for entry in hass.config_entries.async_entries(DOMAIN):
-            if entry.data.get(CONF_GATEWAY_SN, "").lower() == new_gateway_sn.lower():
-                target_entry = entry
-                break
-
-        if not target_entry:
-            _LOGGER.error("目标网关 %s 不存在", new_gateway_sn)
-            return
-
-        target_data = hass.data[DOMAIN].get(target_entry.entry_id, {})
-        target_device_manager = target_data.get("device_manager")
-        if not target_device_manager:
-            _LOGGER.error("目标网关 %s 设备管理器未就绪", new_gateway_sn)
-            return
-
-        try:
-            success = await target_device_manager.transfer_device(
-                device_sn, new_gateway_sn
-            )
-            if success:
-                _LOGGER.info("设备 %s 已从网关 %s 转移到网关 %s", device_sn, old_gateway_sn, new_gateway_sn)
-            else:
-                _LOGGER.error("设备 %s 转移失败", device_sn)
-        except Exception as e:
-            _LOGGER.error("转移设备失败: %s", e)
-
     async def handle_migrate_devices(call: ServiceCall) -> None:
         """完善的设备迁移服务"""
         old_gateway_sn = call.data.get("old_gateway_sn")  # 旧网关SN
@@ -518,6 +471,78 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
                 }
             )
 
+    async def handle_transfer_device(call: ServiceCall) -> None:
+        """处理转移设备服务调用"""
+        device_id = call.data.get("device_id")
+        new_gateway_sn = call.data.get("new_gateway_sn")
+
+        if not device_id or not new_gateway_sn:
+            _LOGGER.error("转移设备服务调用失败：参数不完整")
+            return
+
+        _LOGGER.info("收到转移设备请求，设备ID: %s，目标网关: %s", device_id, new_gateway_sn)
+
+        # 解析设备SN（支持直接传入设备SN或HA设备ID）
+        device_sn = None
+
+        # 方法1：直接检查 device_id 是否是映射表中的设备SN
+        if DOMAIN in hass.data and DEVICE_TO_GATEWAY_MAPPING in hass.data[DOMAIN]:
+            mapping = hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
+            if device_id in mapping:
+                device_sn = device_id
+
+        # 方法2：通过设备注册表查找（device_id 可能是 HA 设备注册表 ID）
+        if not device_sn:
+            try:
+                from homeassistant.helpers.device_registry import async_get as async_get_device_registry
+                dr = async_get_device_registry(hass)
+                device_entry = dr.async_get(device_id)
+                if device_entry:
+                    for identifier in device_entry.identifiers:
+                        if identifier[0] == DOMAIN:
+                            device_sn = identifier[1]
+                            break
+            except Exception:
+                pass
+
+        # 方法3：在所有设备管理器的设备列表中查找
+        if not device_sn:
+            for entry_id, data in hass.data[DOMAIN].items():
+                if isinstance(data, dict):
+                    dm = data.get("device_manager")
+                    if dm:
+                        for device in dm.get_all_devices():
+                            if device_id == device.get("sn", "") or device.get("sn", "") in device_id:
+                                device_sn = device.get("sn")
+                                break
+                        if device_sn:
+                            break
+
+        if not device_sn:
+            _LOGGER.error("未找到设备ID %s 对应的设备SN", device_id)
+            return
+
+        # 查找任意一个设备管理器实例来执行转移
+        device_manager = None
+        for entry_id, data in hass.data[DOMAIN].items():
+            if isinstance(data, dict) and data.get("device_manager"):
+                device_manager = data["device_manager"]
+                break
+
+        if not device_manager:
+            _LOGGER.error("未找到可用的设备管理器")
+            return
+
+        # 执行转移
+        try:
+            success = await device_manager.transfer_device(device_sn, new_gateway_sn)
+            if success:
+                _LOGGER.info("设备 %s 已成功转移到网关 %s", device_sn, new_gateway_sn)
+            else:
+                _LOGGER.error("设备 %s 转移失败", device_sn)
+        except Exception as e:
+            _LOGGER.error("转移设备失败: %s", e)
+
     # 注册服务
     try:
         hass.services.async_register(
@@ -571,21 +596,21 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
 
         hass.services.async_register(
             DOMAIN,
-            SERVICE_TRANSFER_DEVICE,
-            handle_transfer_device,
-            schema=vol.Schema({
-                vol.Required("device_id"): cv.string,
-                vol.Required("new_gateway_sn"): cv.string,
-            })
-        )
-
-        hass.services.async_register(
-            DOMAIN,
             SERVICE_RENAME_DEVICE,
             handle_rename_device,
             schema=vol.Schema({
                 vol.Required("device_id"): cv.string,
                 vol.Required(ATTR_NEW_NAME): cv.string,
+            })
+        )
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_TRANSFER_DEVICE,
+            handle_transfer_device,
+            schema=vol.Schema({
+                vol.Required("device_id"): cv.string,
+                vol.Required("new_gateway_sn"): cv.string,
             })
         )
 
@@ -713,6 +738,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # 监听HA停止事件
         hass.data[DOMAIN][entry.entry_id]["_stop_unsub"] = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _make_shutdown_handler(hass, entry))
 
+        # P0 修复 Bug #1：注册选项更新监听器，使配置选项变更即时生效
+        entry.async_on_unload(entry.add_update_listener(async_update_options))
+
         # 创建后台任务，延迟触发发现
         hass.async_create_task(_background_initialization(mqtt_handler), eager_start=True)
 
@@ -726,6 +754,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.info("准备迁移设备，旧网关: %s, 新网关: %s, 是否移除旧网关: %s", old_gateway_sn, gateway_sn, remove_old_gateway)
             if old_gateway_sn and old_gateway_sn.lower() != gateway_sn.lower():
                 hass.async_create_task(_migrate_devices_async(hass, old_gateway_sn, gateway_sn, remove_old_gateway), name=f"{DOMAIN}_migrate_{entry.entry_id}")
+                # P0 修复 Bug #2：迁移任务调度后立即清除 migration_info，
+                # 防止迁移完成后的 async_reload 再次触发迁移，形成无限循环
+                new_data = {k: v for k, v in entry.data.items() if k != "migration_info"}
+                hass.config_entries.async_update_entry(entry, data=new_data)
+                _LOGGER.info("已清除 migration_info，防止重载时无限循环")
 
         _LOGGER.info("开窗器网关 [%s] 设置完成", gateway_name)
         return True
@@ -843,10 +876,22 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # 保存当前的持久化数据
     await save_persistent_data(hass)
     
-    # 保留设备到网关映射表，add_device 时会智能判断：
-    # - 如果旧网关已删除（配置条目不存在），自动转移设备到新网关
-    # - 如果旧网关仍存在，创建持久通知提示用户确认转移
-    # 这样既保留了映射信息用于智能判断，又不会锁死设备
+    # 清理设备到网关映射表中属于该网关的映射关系
+    # 否则这些设备会被永久锁死在已删除的网关上，无法被新网关发现和添加
+    if DOMAIN in hass.data and DEVICE_TO_GATEWAY_MAPPING in hass.data[DOMAIN]:
+        device_to_gateway_mapping = hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
+        devices_to_remove = []
+        
+        # 找出所有映射到该网关的设备（大小写不敏感）
+        for device_sn, mapped_gateway_sn in list(device_to_gateway_mapping.items()):
+            if mapped_gateway_sn.lower() == gateway_sn.lower():
+                devices_to_remove.append(device_sn)
+                del device_to_gateway_mapping[device_sn]
+        
+        _LOGGER.info("已清理 %d 个设备的网关映射关系（网关 %s 已删除）", len(devices_to_remove), gateway_sn)
+        
+        # 保存更新后的持久化数据
+        await save_persistent_data(hass)
 
 
 async def _background_initialization(mqtt_handler):

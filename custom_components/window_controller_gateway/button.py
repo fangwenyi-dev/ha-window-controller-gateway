@@ -159,7 +159,7 @@ async def async_setup_entry(
         return
     
     gateway_sn = entry.data[CONF_GATEWAY_SN]
-    gateway_name = entry.data.get(CONF_GATEWAY_NAME, f"{DEFAULT_GATEWAY_NAME} {gateway_sn[-6:]}")
+    gateway_name = entry.data.get(CONF_GATEWAY_NAME, f"{DEFAULT_GATEWAY_NAME} {gateway_sn[-4:]}")
     
     # 存储已创建的删除按钮，用于后续清理
     # 始终使用空字典，避免组件重载时重复创建已存在的实体

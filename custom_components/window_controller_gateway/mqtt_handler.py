@@ -78,13 +78,16 @@ class WindowControllerMQTTHandler:
     
     def _schedule_async_task(self, coro):
         """安全地将异步任务调度到主事件循环
-        
-        在MQTT回调线程中正确调度协程到HA主事件循环执行
+
+        在MQTT回调中正确调度协程到HA主事件循环执行。
+        使用 hass.async_create_task 调度，HA 会自动记录未捕获的异常，
+        避免异常被静默吞没。如果事件循环未运行，则关闭协程并跳过。
         """
         try:
             loop = self.hass.loop
             if loop.is_running():
-                asyncio.run_coroutine_threadsafe(coro, loop)
+                # 优先使用 hass.async_create_task，它会自动记录任务中的未捕获异常
+                self.hass.async_create_task(coro)
             else:
                 _LOGGER.warning("事件循环未运行，跳过任务调度")
                 coro.close()
@@ -1106,10 +1109,13 @@ class WindowControllerMQTTHandler:
             if "battery" in data:
                 # 统一存储为 voltage，与网关上报保持一致
                 battery = data["battery"]
-                # 转换为浮点数并除以10（如105 → 10.5V）
-                voltage = float(battery) / 10
-                attributes["voltage"] = voltage
-                _LOGGER.debug("设备 %s 电池电压: %.1fV", device_sn, voltage)
+                try:
+                    # 转换为浮点数并除以10（如105 → 10.5V）
+                    voltage = float(battery) / 10
+                    attributes["voltage"] = voltage
+                    _LOGGER.debug("设备 %s 电池电压: %.1fV", device_sn, voltage)
+                except (ValueError, TypeError) as e:
+                    _LOGGER.error("设备 %s 电池电压数据格式错误: %s, 值: %s", device_sn, e, battery)
             if "state" in data:
                 attributes["state"] = data["state"]
             
@@ -1122,17 +1128,23 @@ class WindowControllerMQTTHandler:
                     
                     if attribute == "voltage":
                         # 转换电压值，105表示10.5v
-                        voltage = float(value) / 10
-                        attributes["voltage"] = voltage
+                        try:
+                            voltage = float(value) / 10
+                            attributes["voltage"] = voltage
+                        except (ValueError, TypeError) as e:
+                            _LOGGER.error("设备 %s 电压属性格式错误: %s, 值: %s", device_sn, e, value)
                     elif attribute == "r_travel":
                         # 处理窗户状态，0表示关闭，其他表示打开
-                        travel_value = int(value)
-                        attributes["r_travel"] = travel_value
-                        # 根据r_travel设置状态
-                        if travel_value == 0:
-                            status = "closed"
-                        else:
-                            status = "open"
+                        try:
+                            travel_value = int(value)
+                            attributes["r_travel"] = travel_value
+                            # 根据r_travel设置状态
+                            if travel_value == 0:
+                                status = "closed"
+                            else:
+                                status = "open"
+                        except (ValueError, TypeError) as e:
+                            _LOGGER.error("设备 %s 位置状态格式错误: %s, 值: %s", device_sn, e, value)
             
             # 更新设备状态
             await self.device_manager.update_device_status(device_sn, status, attributes)

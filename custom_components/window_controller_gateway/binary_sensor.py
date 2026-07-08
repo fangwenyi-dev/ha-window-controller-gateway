@@ -37,7 +37,7 @@ async def async_setup_entry(
         return
     
     gateway_sn = entry.data[CONF_GATEWAY_SN]
-    gateway_name = entry.data.get(CONF_GATEWAY_NAME, f"{DEFAULT_GATEWAY_NAME} {gateway_sn[-6:]}")
+    gateway_name = entry.data.get(CONF_GATEWAY_NAME, f"{DEFAULT_GATEWAY_NAME} {gateway_sn[-4:]}")
     
     # 只添加在线状态传感器
     entities = []

@@ -2,6 +2,7 @@
 import logging
 import os
 import json
+import asyncio
 from homeassistant.core import HomeAssistant
 
 from .const import (
@@ -14,6 +15,11 @@ _LOGGER = logging.getLogger(__name__)
 
 PERSISTENT_DATA_FILE = "window_controller_gateway_data.json"
 SCHEMA_VERSION = 1
+
+# 串行化写入锁 + 防抖标志
+_save_lock = asyncio.Lock()
+_save_pending = False
+
 
 async def load_persistent_data(hass: HomeAssistant) -> None:
     """加载持久化的设备映射和手动删除列表"""
@@ -48,8 +54,32 @@ async def load_persistent_data(hass: HomeAssistant) -> None:
     except Exception as e:
         _LOGGER.info("加载持久化数据失败: %s", e)
 
+
 async def save_persistent_data(hass: HomeAssistant) -> None:
-    """保存设备映射和手动删除列表到持久化存储"""
+    """保存设备映射和手动删除列表到持久化存储
+
+    使用 asyncio.Lock 串行化写入，确保不会有两个协程同时写同一个 .tmp 文件。
+    通过 _save_pending 标志实现防抖：当写入期间有新的保存请求到来时，
+    当前写入完成后会再执行一次写入（读取最新数据），确保数据不会丢失。
+    后续的保存请求只需设置标志即可返回，无需重复写入。
+    """
+    global _save_pending
+
+    # 如果已有保存任务在执行或等待，只需标记还需要再保存一次
+    # 正在执行的任务会在完成后检查此标志并自动补写最新数据
+    if _save_pending:
+        _save_pending = True
+        return
+
+    _save_pending = True
+    async with _save_lock:
+        while _save_pending:
+            _save_pending = False
+            await _do_save(hass)
+
+
+async def _do_save(hass: HomeAssistant) -> None:
+    """执行实际的文件写入操作"""
     try:
         config_dir = hass.config.config_dir
         data_file = os.path.join(config_dir, PERSISTENT_DATA_FILE)
