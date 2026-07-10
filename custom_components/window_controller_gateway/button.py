@@ -113,8 +113,8 @@ class BaseWindowControllerButton(WindowControllerBaseEntity, ButtonEntity):
         self.entry_id = entry_id
         # 确保按钮始终可用，不会变成灰色
         self._attr_available = True
-        # 设为配置类，使按钮出现在配置区域，控制区只保留 Cover
-        self._attr_entity_category = EntityCategory.CONFIG
+        # 不设置 entity_category，使按钮出现在控制区域
+        # HA 会按平台类型分卡片：Cover 一张卡片，Button 一张卡片
     
     @property
     def device_info(self) -> DeviceInfo:
@@ -237,6 +237,39 @@ def _create_wind_lock_buttons(hass, device_manager, mqtt_handler, gateway_sn, de
     return entities
 
 
+def _fix_entity_categories(hass, gateway_sn, device_sn):
+    """强制更新实体注册表中的 entity_category
+    
+    HA 实体注册表会缓存 entity_category，代码中修改 _attr_entity_category 
+    不会自动更新已有实体。需要显式调用 async_update_entity 来修正。
+    """
+    from homeassistant.helpers.entity_registry import async_get
+    entity_registry = async_get(hass)
+    
+    # 控制区按钮（无 entity_category）
+    control_button_types = ["open", "stop", "close", "a"]
+    # 配置区按钮（CONFIG）
+    config_button_types = ["wind_lock_tilt", "wind_lock_flat"]
+    
+    for button_type in control_button_types:
+        unique_id = f"{gateway_sn}_{device_sn}_{button_type}"
+        entity_id = entity_registry.async_get_entity_id("button", DOMAIN, unique_id)
+        if entity_id:
+            entity_entry = entity_registry.entities.get(entity_id)
+            if entity_entry and entity_entry.entity_category is not None:
+                entity_registry.async_update_entity(entity_id, entity_category=None)
+                _LOGGER.info("修正控制按钮 entity_category → None: %s", entity_id)
+    
+    for button_type in config_button_types:
+        unique_id = f"{gateway_sn}_{device_sn}_{button_type}"
+        entity_id = entity_registry.async_get_entity_id("button", DOMAIN, unique_id)
+        if entity_id:
+            entity_entry = entity_registry.entities.get(entity_id)
+            if entity_entry and entity_entry.entity_category != EntityCategory.CONFIG:
+                entity_registry.async_update_entity(entity_id, entity_category=EntityCategory.CONFIG)
+                _LOGGER.info("修正配置按钮 entity_category → CONFIG: %s", entity_id)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -302,6 +335,9 @@ async def async_setup_entry(
             device_sn = device["sn"]
             device_name = device["name"]
             
+            # 强制修正已有实体的 entity_category（解决注册表缓存旧值的问题）
+            _fix_entity_categories(hass, gateway_sn, device_sn)
+            
             # 生成删除按钮的唯一ID
             remove_button_unique_id = f"{gateway_sn}_remove_{device_sn}"
             
@@ -335,6 +371,9 @@ async def async_setup_entry(
         if device_type == DEVICE_TYPE_WINDOW_OPENER:
             entity_registry = get_entity_registry(hass)
             entities_to_add = []
+            
+            # 强制修正已有实体的 entity_category
+            _fix_entity_categories(hass, gateway_sn, device_sn)
             
             # 检查删除按钮是否已存在
             remove_unique_id = f"{gateway_sn}_remove_{device_sn}"
