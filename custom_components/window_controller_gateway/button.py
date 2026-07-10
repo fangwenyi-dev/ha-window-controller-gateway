@@ -19,6 +19,8 @@ from .const import (
     COMMAND_OPEN,
     COMMAND_CLOSE,
     COMMAND_STOP,
+    COMMAND_WIND_LOCK_TILT,
+    COMMAND_WIND_LOCK_FLAT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,12 +46,12 @@ def _create_device_buttons(hass, device_manager, mqtt_handler, gateway_sn, devic
     """
     entities_to_add = []
     
-    # 按钮配置
+    # 按钮配置 - 使用序号前缀控制排列顺序（从上到下）
     button_configs = [
-        ("open", "开启", "mdi:window-open", COMMAND_OPEN),
-        ("stop", "暂停", "mdi:pause", COMMAND_STOP),
-        ("close", "关闭", "mdi:window-closed", COMMAND_CLOSE),
-        ("a", "内倒", "mdi:rotate-3d-variant", COMMAND_A)
+        ("open", "① 开启", "mdi:window-open", COMMAND_OPEN),
+        ("stop", "② 暂停", "mdi:pause", COMMAND_STOP),
+        ("close", "③ 关闭", "mdi:window-closed", COMMAND_CLOSE),
+        ("a", "④ 内倒", "mdi:rotate-3d-variant", COMMAND_A)
     ]
     
     # 直接创建所有按钮，不检查实体是否存在
@@ -111,7 +113,7 @@ class BaseWindowControllerButton(WindowControllerBaseEntity, ButtonEntity):
         self.entry_id = entry_id
         # 确保按钮始终可用，不会变成灰色
         self._attr_available = True
-        # 设为配置类，避免与Cover实体混杂在控制区
+        # 设为配置类，使按钮出现在配置区域，控制区只保留 Cover
         self._attr_entity_category = EntityCategory.CONFIG
     
     @property
@@ -132,6 +134,107 @@ class BaseWindowControllerButton(WindowControllerBaseEntity, ButtonEntity):
             _LOGGER.info("已触发设备 %s 的%s命令", self.device_sn, self._attr_name)
         except Exception as e:
             _LOGGER.error("触发设备%s命令失败: %s", self._attr_name, e)
+
+
+class WindLockModeButton(WindowControllerBaseEntity, ButtonEntity):
+    """风锁模式按钮实体 - 内倒模式/平开模式
+
+    设为 CONFIG 类别，使按钮出现在配置区域，
+    与控制区的 Cover 和基础控制按钮分离。
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        device_manager,
+        mqtt_handler,
+        gateway_sn: str,
+        device_sn: str,
+        device_name: str,
+        button_name: str,
+        button_type: str,
+        command: str,
+        icon: str,
+        entry_id: str = None
+    ):
+        """初始化风锁模式按钮"""
+        super().__init__(
+            hass=hass,
+            device_manager=device_manager,
+            mqtt_handler=mqtt_handler,
+            gateway_sn=gateway_sn,
+            device_sn=device_sn,
+            device_name=device_name
+        )
+
+        self._attr_name = button_name
+        self._attr_unique_id = f"{gateway_sn}_{device_sn}_{button_type}"
+        self._attr_icon = icon
+        self.command = command
+        self.entry_id = entry_id
+        self._attr_available = True
+        # 设为配置类，使按钮出现在配置区域
+        self._attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """返回设备信息"""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.device_sn)},
+            name=self.device_name,
+            manufacturer=MANUFACTURER,
+            model="开窗器",
+            serial_number=self.device_sn
+        )
+
+    async def async_press(self) -> None:
+        """按下按键，发送风锁模式命令"""
+        try:
+            await self._get_mqtt_handler().send_command(self.device_sn, self.command)
+            _LOGGER.info("已触发设备 %s 的%s", self.device_sn, self._attr_name)
+        except Exception as e:
+            _LOGGER.error("触发设备%s失败: %s", self._attr_name, e)
+
+
+def _create_wind_lock_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, entry_id):
+    """为设备创建风锁模式按钮（内倒模式、平开模式）
+
+    Args:
+        hass: Home Assistant实例
+        device_manager: 设备管理器
+        mqtt_handler: MQTT处理器
+        gateway_sn: 网关SN
+        device_sn: 设备SN
+        device_name: 设备名称
+        entry_id: 配置条目ID
+
+    Returns:
+        list: 风锁模式按钮实体列表
+    """
+    button_configs = [
+        ("wind_lock_flat", "⑤ 平开模式", "mdi:window-open", COMMAND_WIND_LOCK_FLAT),
+        ("wind_lock_tilt", "⑥ 内倒模式", "mdi:window-open-variant", COMMAND_WIND_LOCK_TILT),
+    ]
+
+    entities = []
+    for button_type, button_name, icon, command in button_configs:
+        button = WindLockModeButton(
+            hass,
+            device_manager,
+            mqtt_handler,
+            gateway_sn,
+            device_sn,
+            device_name,
+            button_name,
+            button_type,
+            command,
+            icon,
+            entry_id
+        )
+        entities.append(button)
+        _LOGGER.debug("为设备 %s 添加%s按钮", device_name, button_name)
+
+    return entities
 
 
 async def async_setup_entry(
@@ -221,6 +324,10 @@ async def async_setup_entry(
             device_buttons = _create_device_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, str(entry.entry_id))
             _LOGGER.debug("设备 %s 创建了 %d 个按钮", device_sn, len(device_buttons))
             entities.extend(device_buttons)
+            
+            # 创建风锁模式按钮（内倒模式、平开模式）- 不设置 entity_category，独立显示
+            wind_lock_buttons = _create_wind_lock_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, str(entry.entry_id))
+            entities.extend(wind_lock_buttons)
     
     # 定义设备添加回调函数
     async def on_device_added(device_sn: str, device_name: str, device_type: str):
@@ -254,6 +361,12 @@ async def async_setup_entry(
                 device_buttons = _create_device_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, str(entry.entry_id))
                 entities_to_add.extend(device_buttons)
             
+            # 检查风锁模式按钮是否已存在
+            wind_lock_tilt_unique_id = f"{gateway_sn}_{device_sn}_wind_lock_tilt"
+            if not entity_registry.async_get_entity_id("button", DOMAIN, wind_lock_tilt_unique_id):
+                wind_lock_buttons = _create_wind_lock_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, str(entry.entry_id))
+                entities_to_add.extend(wind_lock_buttons)
+            
             # 只有当有实体需要添加时才调用async_add_entities
             if entities_to_add:
                 async_add_entities(entities_to_add)
@@ -283,7 +396,7 @@ async def async_setup_entry(
                         _LOGGER.info("已从实体注册表中删除设备 %s 的删除按钮", device_name)
                     
                     # 生成并删除其他按钮实体ID
-                    button_types = ["open", "stop", "close", "a"]
+                    button_types = ["open", "stop", "close", "a", "wind_lock_tilt", "wind_lock_flat"]
                     for button_type in button_types:
                         button_unique_id = f"{gateway_sn}_{device_sn}_{button_type}"
                         # 查找并删除实体

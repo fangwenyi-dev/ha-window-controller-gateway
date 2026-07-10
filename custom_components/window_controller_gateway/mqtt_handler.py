@@ -14,6 +14,7 @@ from homeassistant.components import mqtt
 
 from .const import (
     DOMAIN,
+    CONF_GATEWAY_SN,
     ATTR_DEVICE_SN,
     ATTR_DEVICE_NAME,
     ATTR_POSITION,
@@ -36,6 +37,9 @@ from .const import (
     COMMAND_VALUE_STOP,
     COMMAND_VALUE_TOGGLE,
     ATTRIBUTE_W_TRAVEL,
+    ATTRIBUTE_WIND_LOCK_MODE,
+    COMMAND_VALUE_WIND_LOCK_TILT,
+    COMMAND_VALUE_WIND_LOCK_FLAT,
     DEFAULT_COMMAND_ID,
     TOPIC_GATEWAY_REQ_FORMAT,
     TOPIC_GATEWAY_RSP,
@@ -189,23 +193,31 @@ class WindowControllerMQTTHandler:
                     msg_key = f"{ctype}_{payload.get('id', 0)}_{response_sn}"
                     current_time = time.time()
                     
-                    # 如果是来自未配置网关的消息，触发网关发现
+                    # 如果是来自其他网关的消息，触发网关发现
                     if response_sn.lower() != self.gateway_sn.lower():
                         try:
-                            from .discovery import async_discover_gateway
-                            gateway_name = f"网关 {response_sn[-4:]}"
-                            
-                            # 检查是否处于替换模式
-                            replace_mode = False
-                            for flow in self.hass.config_entries.flow.async_progress():
-                                if flow["handler"] == DOMAIN and flow.get("context", {}).get("source") == "replace_gateway":
-                                    replace_mode = True
+                            # 快速检查：如果该网关已在配置条目中，跳过发现触发
+                            already_configured = False
+                            for entry in self.hass.config_entries.async_entries(DOMAIN):
+                                if entry.data.get(CONF_GATEWAY_SN, "").lower() == response_sn.lower():
+                                    already_configured = True
                                     break
                             
-                            # 触发网关发现，传入替换模式标志
-                            self._schedule_async_task(
-                                async_discover_gateway(self.hass, response_sn, gateway_name, replace_mode, self.gateway_sn)
-                            )
+                            if not already_configured:
+                                from .discovery import async_discover_gateway
+                                gateway_name = f"网关 {response_sn[-4:]}"
+                                
+                                # 检查是否处于替换模式
+                                replace_mode = False
+                                for flow in self.hass.config_entries.flow.async_progress():
+                                    if flow["handler"] == DOMAIN and flow.get("context", {}).get("source") == "replace_gateway":
+                                        replace_mode = True
+                                        break
+                                
+                                # 触发网关发现，传入替换模式标志
+                                self._schedule_async_task(
+                                    async_discover_gateway(self.hass, response_sn, gateway_name, replace_mode, self.gateway_sn)
+                                )
                         except Exception as e:
                             _LOGGER.error("触发未配置网关发现失败: %s", e)
                         return
@@ -381,7 +393,7 @@ class WindowControllerMQTTHandler:
                 return False
             
             # 验证命令类型
-            valid_commands = ["bind_gateway", "start_pairing", "discover", "open", "close", "stop", "a", "set_position", "status"]
+            valid_commands = ["bind_gateway", "start_pairing", "discover", "open", "close", "stop", "a", "set_position", "status", "wind_lock_tilt", "wind_lock_flat"]
             if command not in valid_commands:
                 _LOGGER.error("未知命令类型: %s", command)
                 return False
@@ -393,7 +405,7 @@ class WindowControllerMQTTHandler:
                     _LOGGER.error("设备不存在，无法发送命令: %s", device_sn)
                     return False
             
-            is_offline_allowed_command = command in ["open", "close", "stop", "a", "set_position", "start_pairing"]
+            is_offline_allowed_command = command in ["open", "close", "stop", "a", "set_position", "start_pairing", "wind_lock_tilt", "wind_lock_flat"]
             
             if is_offline_allowed_command:
                 _LOGGER.info("命令 %s 无论网关在线与否都尝试发送", command)
@@ -418,7 +430,9 @@ class WindowControllerMQTTHandler:
                 "close": "004",  # 004: 设备控制
                 "stop": "004",  # 004: 设备控制
                 "a": "004",  # 004: 设备控制
-                "set_position": "004"  # 004: 设备控制
+                "set_position": "004",  # 004: 设备控制
+                "wind_lock_tilt": "004",   # 004: 设备控制 - 内倒模式
+                "wind_lock_flat": "004"    # 004: 设备控制 - 平开模式
             }
             
             ctype = command_map.get(command, "004")
@@ -482,6 +496,14 @@ class WindowControllerMQTTHandler:
                     _LOGGER.warning("位置参数无效，使用默认值0: %s", position)
                     position = 0
                 payload["data"]["value"] = str(position)
+            elif command in ("wind_lock_tilt", "wind_lock_flat"):
+                # 风锁模式控制 - 内倒模式(value=0) / 平开模式(value=1)
+                payload["data"]["sn"] = device_sn
+                payload["data"]["attribute"] = ATTRIBUTE_WIND_LOCK_MODE
+                if command == "wind_lock_tilt":
+                    payload["data"]["value"] = COMMAND_VALUE_WIND_LOCK_TILT
+                else:
+                    payload["data"]["value"] = COMMAND_VALUE_WIND_LOCK_FLAT
             elif command == "status":
                 # 状态查询命令 - 必须包含设备SN，网关才能知道查询哪个设备
                 payload["data"]["sn"] = device_sn
@@ -747,19 +769,26 @@ class WindowControllerMQTTHandler:
         return self.connected
     
     async def unbind_device(self, device_sn: str):
-        """解绑设备 - 使用协议类型003，bind=0"""
-        # 构建符合协议要求的解绑命令
+        """解绑设备 - 使用协议类型003，bind=0
+
+        协议格式：
+          {"head":"$SH","ctype":"003","id":<id>,"sn":"<网关SN>",
+           "data":{"devtype":"<设备类型>","sn":"<设备SN>","bind":0}}
+        """
+        # 获取设备实际类型，回退到 DEVICE_TYPE_CURTAIN_CTR
+        device = self.device_manager.get_device(device_sn)
+        device_type = device.get("type", DEVICE_TYPE_CURTAIN_CTR) if device else DEVICE_TYPE_CURTAIN_CTR
+
         payload = {
             "head": PROTOCOL_HEAD,
             "ctype": "003",
             "id": self.command_id,
             "data": {
                 "bind": 0,
-                "devtype": DEVICE_TYPE_CURTAIN_CTR,
+                "devtype": device_type,
                 "sn": device_sn
             },
-            "sn": self.gateway_sn,
-            "bind": 0  # 0代表解绑
+            "sn": self.gateway_sn
         }
         # 递增ID
         self.command_id += 1
@@ -896,6 +925,31 @@ class WindowControllerMQTTHandler:
             self._processed_messages[msg_key] = current_time
         await handler_coro
 
+    async def _send_ack(self, ctype: str, payload: dict):
+        """发送确认响应到网关（用于网关主动上报的消息）
+
+        网关主动上报的消息（002/005/006/007/008/009/010）需要 HA 回复 errcode:0 确认，
+        否则网关会重复重发。
+        HA 主动下发的命令（001/003/004）由网关回复，HA 不需要再回复。
+        """
+        response_payload = {
+            "head": PROTOCOL_HEAD,
+            "ctype": ctype,
+            "id": payload.get("id", 0),
+            "sn": self.gateway_sn,
+            "data": {
+                "errcode": 0
+            }
+        }
+        await mqtt.async_publish(
+            self.hass,
+            self.TOPIC_GATEWAY_REQ,
+            json.dumps(response_payload),
+            1,
+            False
+        )
+        _LOGGER.debug("已发送%s确认响应，id: %s", ctype, payload.get("id", 0))
+
     async def _handle_ctype_001(self, payload, ctype, data):
         """处理协议类型001：绑定网关"""
         # 检查是否包含设备信息（vesion, model等字段）或网关主动发起绑定请求
@@ -1019,26 +1073,8 @@ class WindowControllerMQTTHandler:
         except Exception as e:
             _LOGGER.error("处理002消息异常: %s", e, exc_info=True)
         
-        # 构建002响应
-        response_payload = {
-            "head": PROTOCOL_HEAD,
-            "ctype": "002",
-            "id": payload.get("id", 0),
-            "sn": self.gateway_sn,
-            "data": {
-                "errcode": 0
-            }
-        }
-        
-        # 发送响应到网关 - 按照协议要求发送到gateway/<sn>/req主题
-        await mqtt.async_publish(
-            self.hass,
-            self.TOPIC_GATEWAY_REQ,
-            json.dumps(response_payload),
-            1,
-            False
-        )
-        _LOGGER.info("发送网关状态上报响应成功到主题: %s", self.TOPIC_GATEWAY_REQ)
+        # 回复 002 确认，告知网关已收到状态上报，避免网关重复重发
+        await self._send_ack("002", payload)
 
     async def _quick_add_device(self, device_sn, device_info):
         """快速添加设备 - 自动发现"""
@@ -1083,38 +1119,51 @@ class WindowControllerMQTTHandler:
             self._notify_device_status_change(device_sn)
 
     async def _handle_ctype_003(self, payload, ctype, data):
-        """处理协议类型003：绑定子设备"""
+        """处理协议类型003：绑定/解绑子设备响应
+
+        003 是 HA 主动下发的命令（bind=1 配对 / bind=0 解绑），
+        网关回复 errcode:0 表示已收到。HA 不需要回复确认。
+        """
         errcode = data.get("errcode", -1)
         device_sn = data.get("sn") or payload.get("sn")
-        
+        bind_value = data.get("bind", None)
+
         if errcode == 0 and device_sn:
-            # 绑定成功，添加设备
-            # 计算设备序号，从01开始
-            device_count = len(self.device_manager.get_all_devices())
-            device_number = device_count + 1
-            device_name = get_device_display_name(self.gateway_sn, device_sn, device_number)
-            # 手动配对时使用 is_manual_pairing=True，跳过手动删除列表检查
-            await self.device_manager.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER, is_manual_pairing=True)
-            # 配对成功后立即退出配对模式，UI 可以立刻从"配对中"恢复
-            # 同时取消配对超时定时器，避免超时回调冗余触发
-            if self.pairing_timeout_handle:
-                self.pairing_timeout_handle.cancel()
-                self.pairing_timeout_handle = None
-            self.pairing_active = False
-            self._notify_status_change()
-            _LOGGER.info("设备绑定成功: %s, 名称: %s", device_sn, device_name)
-        elif errcode == 0 and not device_sn:
-            _LOGGER.warning("设备绑定成功但未返回设备SN，无法添加设备: %s", payload)
-        else:
-            # 错误码7可能表示通讯距离不够，不记录为错误
-            if errcode == 7:
-                _LOGGER.debug("设备绑定失败，错误码: %d, SN: %s (可能是通讯距离不够)", errcode, device_sn)
+            # 判断是绑定还是解绑：优先看响应中的 bind 字段，
+            # 如果网关未回传 bind，则通过设备是否已存在来推断
+            existing_device = self.device_manager.get_device(device_sn)
+            is_unbind = bind_value == 0 or (bind_value is None and existing_device)
+
+            if is_unbind:
+                # 解绑成功，不需要在 HA 侧重复删除（gateway.py 已处理）
+                _LOGGER.info("设备解绑成功: %s", device_sn)
             else:
-                # 其他错误码记录为警告
-                _LOGGER.warning("设备绑定失败，错误码: %d, SN: %s", errcode, device_sn)
+                # 绑定成功，添加设备
+                device_count = len(self.device_manager.get_all_devices())
+                device_number = device_count + 1
+                device_name = get_device_display_name(self.gateway_sn, device_sn, device_number)
+                await self.device_manager.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER, is_manual_pairing=True)
+                # 配对成功后立即退出配对模式
+                if self.pairing_timeout_handle:
+                    self.pairing_timeout_handle.cancel()
+                    self.pairing_timeout_handle = None
+                self.pairing_active = False
+                self._notify_status_change()
+                _LOGGER.info("设备绑定成功: %s, 名称: %s", device_sn, device_name)
+        elif errcode == 0 and not device_sn:
+            _LOGGER.warning("设备操作成功但未返回设备SN: %s", payload)
+        else:
+            if errcode == 7:
+                _LOGGER.debug("设备操作失败，错误码: %d, SN: %s (可能是通讯距离不够)", errcode, device_sn)
+            else:
+                _LOGGER.warning("设备操作失败，错误码: %d, SN: %s", errcode, device_sn)
 
     async def _handle_ctype_004(self, payload, ctype, data):
-        """处理协议类型004：设备控制响应"""
+        """处理协议类型004：设备控制响应
+
+        004 是 HA 主动下发的命令，网关回复 errcode:0 表示已收到。
+        HA 不需要回复确认，否则会被网关误认为是新命令导致循环。
+        """
         errcode = data.get("errcode", -1)
         device_sn = data.get("sn")
         if errcode == 0:
@@ -1178,6 +1227,11 @@ class WindowControllerMQTTHandler:
                                 status = "open"
                         except (ValueError, TypeError) as e:
                             _LOGGER.error("设备 %s 位置状态格式错误: %s, 值: %s", device_sn, e, value)
+                    elif attribute == "rwp_wind_lock_mode":
+                        # 风锁模式上报：0=内倒模式，1=平开模式
+                        attributes["wind_lock_mode"] = value
+                        mode_name = "内倒模式" if str(value) == "0" else "平开模式"
+                        _LOGGER.info("设备 %s 风锁模式确认: %s (值=%s)", device_sn, mode_name, value)
             
             # 更新设备状态
             await self.device_manager.update_device_status(device_sn, status, attributes)
@@ -1185,29 +1239,45 @@ class WindowControllerMQTTHandler:
             self._notify_device_status_change(device_sn)
             _LOGGER.debug("设备上报处理完成: %s", device_sn)
 
+        # 回复 005 确认，告知网关已收到设备上报，避免网关重复重发
+        await self._send_ack("005", payload)
+
     async def _handle_ctype_006(self, payload, ctype, data):
-        """处理协议类型006：批量设备状态上报"""
-        # 这里可以添加批量设备状态上报的处理逻辑
+        """处理协议类型006：批量设备状态上报
+
+        006 是网关主动上报，HA 需要回复确认。
+        """
         _LOGGER.debug("批量设备状态上报: %s", data)
+        await self._send_ack("006", payload)
 
     async def _handle_ctype_007(self, payload, ctype, data):
-        """处理协议类型007：设备事件上报"""
-        # 这里可以添加设备事件上报的处理逻辑
+        """处理协议类型007：设备事件上报
+
+        007 是网关主动上报，HA 需要回复确认。
+        """
         _LOGGER.debug("设备事件上报: %s", data)
+        await self._send_ack("007", payload)
 
     async def _handle_ctype_008(self, payload, ctype, data):
-        """处理协议类型008：网关配置更新"""
-        # 这里可以添加网关配置更新的处理逻辑
+        """处理协议类型008：网关配置更新
+
+        008 是网关主动上报，HA 需要回复确认。
+        """
         _LOGGER.debug("网关配置更新: %s", data)
+        await self._send_ack("008", payload)
 
     async def _handle_ctype_009(self, payload, ctype, data):
-        """处理协议类型009：设备配置更新"""
-        # 这里可以添加设备配置更新的处理逻辑
+        """处理协议类型009：设备配置更新
+
+        009 是网关主动上报，HA 需要回复确认。
+        """
         _LOGGER.debug("设备配置更新: %s", data)
+        await self._send_ack("009", payload)
 
     async def _handle_ctype_010(self, payload, ctype, data):
-        """处理协议类型010：系统消息"""
-        # 这里可以添加系统消息的处理逻辑
+        """处理协议类型010：系统消息
+
+        010 是网关主动上报，HA 需要回复确认。
+        """
         _LOGGER.debug("系统消息: %s", data)
-        # MQTT订阅会在HA重启时自动清理，无需手动处理
-        return True
+        await self._send_ack("010", payload)

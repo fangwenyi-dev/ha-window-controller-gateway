@@ -65,6 +65,9 @@ COMMAND_VALUE_CLOSE: Final = "0"
 COMMAND_VALUE_STOP: Final = "101"
 COMMAND_VALUE_TOGGLE: Final = "200"
 ATTRIBUTE_W_TRAVEL: Final = "w_travel"
+ATTRIBUTE_WIND_LOCK_MODE: Final = "rwp_wind_lock_mode"
+COMMAND_VALUE_WIND_LOCK_TILT: Final = "0"   # 内倒模式
+COMMAND_VALUE_WIND_LOCK_FLAT: Final = "1"    # 平开模式
 
 # ==================== 状态相关 ====================
 STATE_PAIRING: Final = "pairing"
@@ -102,6 +105,8 @@ COMMAND_PAIR: Final = "pair"
 COMMAND_DISCOVER: Final = "discover"
 COMMAND_STATUS: Final = "status"
 COMMAND_START_PAIRING: Final = "start_pairing"
+COMMAND_WIND_LOCK_TILT: Final = "wind_lock_tilt"   # 内倒模式
+COMMAND_WIND_LOCK_FLAT: Final = "wind_lock_flat"    # 平开模式
 
 # ==================== 实体相关 ====================
 ENTITY_GATEWAY_PREFIX: Final = "gateway_"

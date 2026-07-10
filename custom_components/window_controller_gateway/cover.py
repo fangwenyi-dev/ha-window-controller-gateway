@@ -11,6 +11,7 @@ from homeassistant.components.cover import (
     CoverEntityFeature,
     CoverDeviceClass,
 )
+from datetime import datetime, timedelta
 
 from .base_entity import WindowControllerBaseEntity
 from .const import (
@@ -56,12 +57,16 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
 
         self._attr_unique_id = f"{gateway_sn}_{device_sn}_cover"
         self._attr_device_class = CoverDeviceClass.WINDOW
+        self._attr_name = "开窗器"
         self.entry_id = entry_id
         self._attr_supported_features = (
             CoverEntityFeature.OPEN |
             CoverEntityFeature.CLOSE |
             CoverEntityFeature.STOP
         )
+        # 始终可用，防止变灰
+        self._attr_available = True
+        self._last_state_update = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -71,12 +76,25 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
             name=self.device_name,
             manufacturer=MANUFACTURER,
             model="开窗器",
-            serial_number=self.device_sn
+            serial_number=self.device_sn,
+            sw_version="1.0"
         )
 
     @property
     def is_closed(self):
-        """始终返回None，HA不知道状态，所以所有按钮都可点击"""
+        """从设备管理器读取实际状态，无数据时返回None"""
+        device = self.device_manager.get_device(self.device_sn)
+        if device:
+            status = device.get("status")
+            if status == "closed":
+                return True
+            if status == "open":
+                return False
+            # 无明确状态时尝试从 r_travel 推断
+            attributes = device.get("attributes", {})
+            r_travel = attributes.get("r_travel")
+            if r_travel is not None:
+                return r_travel == 0
         return None
 
     @property
@@ -91,8 +109,22 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
 
     @property
     def current_cover_position(self):
-        """始终返回None，HA不知道位置，所以所有按钮都可点击"""
+        """从设备属性读取位置百分比，无数据时返回None"""
+        device = self.device_manager.get_device(self.device_sn)
+        if device:
+            attributes = device.get("attributes", {})
+            r_travel = attributes.get("r_travel")
+            if r_travel is not None:
+                try:
+                    return int(r_travel)
+                except (ValueError, TypeError):
+                    return None
         return None
+
+    async def async_update(self) -> None:
+        """定期更新状态，防止实体被HA标记为unavailable"""
+        self._attr_available = True
+        self.async_write_ha_state()
 
     async def async_open_cover(self, **kwargs) -> None:
         """打开开窗器"""

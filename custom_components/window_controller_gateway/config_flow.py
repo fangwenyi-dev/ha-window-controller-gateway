@@ -168,6 +168,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "gateway_sn": gateway_sn,
                         "gateway_name": gateway_name,
                         "title_placeholders": {"name": gateway_name},
+                        "description_placeholders": {
+                            "name": gateway_name,
+                            "sn": gateway_sn
+                        },
                         "suggested_display_name": gateway_name,
                         "source": "discovery",
                         "replace_mode": replace_mode
@@ -188,6 +192,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "title_placeholders": {
                     "name": gateway_name
                 },
+                "description_placeholders": {
+                    "name": gateway_name,
+                    "sn": gateway_sn
+                },
                 "suggested_display_name": gateway_name,
                 "source": "discovery",
                 "replace_mode": replace_mode
@@ -205,6 +213,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "gateway_name": gateway_name,
                 "title_placeholders": {
                     "name": gateway_name
+                },
+                "description_placeholders": {
+                    "name": gateway_name,
+                    "sn": gateway_sn
                 },
                 "suggested_display_name": gateway_name,
                 "source": "discovery"

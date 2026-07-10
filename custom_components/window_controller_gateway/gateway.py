@@ -8,7 +8,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass
 )
 from homeassistant.components.button import ButtonEntity
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 
 from .const import (
     DOMAIN,
@@ -217,6 +217,8 @@ class GatewayDeviceRemoveButton(ButtonEntity):
         self._attr_unique_id = f"{gateway_sn}_remove_{device_sn}"
         # 添加图标
         self._attr_icon = "mdi:delete"
+        # 设为配置类，使按钮出现在配置区域
+        self._attr_entity_category = EntityCategory.CONFIG
     
     @property
     def device_info(self) -> DeviceInfo:

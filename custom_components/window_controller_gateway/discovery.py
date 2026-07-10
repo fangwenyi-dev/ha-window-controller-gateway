@@ -1,5 +1,6 @@
 """Window Controller Gateway Discovery Platform"""
 import logging
+import time
 from typing import Any, Dict, Optional
 
 from homeassistant.core import HomeAssistant
@@ -12,6 +13,9 @@ from .const import DOMAIN, CONF_GATEWAY_SN, CONF_GATEWAY_NAME
 
 _LOGGER = logging.getLogger(__name__)
 
+# 速率限制：同一网关SN的最小发现间隔（秒）
+_DISCOVERY_COOLDOWN = 60
+
 async def async_setup_discovery_platform(hass: HomeAssistant):
     """设置发现平台"""
     _LOGGER.info("设置开窗器网关发现平台")
@@ -19,7 +23,8 @@ async def async_setup_discovery_platform(hass: HomeAssistant):
     # 注册发现平台
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["discovery"] = {
-        "ignored_gateways": set()
+        "ignored_gateways": set(),
+        "last_discovery_time": {},  # 记录每个网关SN的最后一次发现触发时间
     }
     
     return True
@@ -34,23 +39,59 @@ async def async_discover_gateway(hass: HomeAssistant, gateway_sn: str, gateway_n
         replace_mode: 是否为替换模式
         current_gateway_sn: 当前网关SN（替换模式下使用）
     """
-    _LOGGER.info("发现新网关: %s (SN: %s), 替换模式: %s", gateway_name, gateway_sn, replace_mode)
+    # 确保 discovery 数据结构存在
+    if DOMAIN not in hass.data:
+        hass.data[DOMAIN] = {}
+    if "discovery" not in hass.data[DOMAIN]:
+        hass.data[DOMAIN]["discovery"] = {
+            "ignored_gateways": set(),
+            "last_discovery_time": {},
+        }
     
-    # 检查网关是否已被忽略
-    if DOMAIN in hass.data and "discovery" in hass.data[DOMAIN]:
-        if gateway_sn in hass.data[DOMAIN]["discovery"]["ignored_gateways"]:
-            _LOGGER.debug("网关 %s 已被忽略，跳过发现", gateway_sn)
+    discovery_data = hass.data[DOMAIN]["discovery"]
+    
+    # 1. 检查网关是否已被忽略
+    if gateway_sn in discovery_data.get("ignored_gateways", set()):
+        _LOGGER.debug("网关 %s 已被忽略，跳过发现", gateway_sn)
+        return
+    
+    # 2. 速率限制：检查冷却时间
+    now = time.time()
+    last_time = discovery_data.get("last_discovery_time", {}).get(gateway_sn, 0)
+    if now - last_time < _DISCOVERY_COOLDOWN:
+        _LOGGER.debug("网关 %s 发现冷却中（距上次 %.0f 秒），跳过", gateway_sn, now - last_time)
+        return
+    discovery_data.setdefault("last_discovery_time", {})[gateway_sn] = now
+    
+    # 3. 检查网关是否已在配置条目中
+    existing_entries = hass.config_entries.async_entries(DOMAIN)
+    for entry in existing_entries:
+        if entry.data.get(CONF_GATEWAY_SN, "").lower() == gateway_sn.lower():
+            _LOGGER.debug("网关 %s 已在配置条目中，跳过发现", gateway_sn)
             return
     
-    # 检查网关是否已配置
+    # 4. 检查网关是否已在设备注册表中
     device_registry = dr.async_get(hass)
     existing_device = device_registry.async_get_device(
         identifiers={(DOMAIN, gateway_sn)}
     )
     
     if existing_device:
-        _LOGGER.debug("网关 %s 已存在，跳过发现", gateway_sn)
+        _LOGGER.debug("网关 %s 已在设备注册表中，跳过发现", gateway_sn)
         return
+    
+    # 5. 检查是否已有进行中的发现流程
+    for flow in hass.config_entries.flow.async_progress():
+        if flow.get("handler") == DOMAIN:
+            flow_context = flow.get("context", {})
+            flow_data = flow.get("data", {})
+            flow_sn = flow_data.get("gateway_sn") or flow_context.get("gateway_sn")
+            if flow_sn and flow_sn.lower() == gateway_sn.lower():
+                _LOGGER.debug("网关 %s 已有进行中的发现流程，跳过", gateway_sn)
+                return
+    
+    # 通过所有检查，真正发现新网关
+    _LOGGER.info("发现新网关: %s (SN: %s), 替换模式: %s", gateway_name, gateway_sn, replace_mode)
     
     # 使用基本发现流程
     from homeassistant.config_entries import SOURCE_DISCOVERY
@@ -85,7 +126,8 @@ async def async_ignore_gateway(hass: HomeAssistant, gateway_sn: str):
     
     if "discovery" not in hass.data[DOMAIN]:
         hass.data[DOMAIN]["discovery"] = {
-            "ignored_gateways": set()
+            "ignored_gateways": set(),
+            "last_discovery_time": {},
         }
     
     hass.data[DOMAIN]["discovery"]["ignored_gateways"].add(gateway_sn)
