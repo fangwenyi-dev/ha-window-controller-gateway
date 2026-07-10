@@ -124,12 +124,30 @@ INITIAL_RETRY_DELAY: Final = 5
 RESTART_DELAY: Final = 1
 GATEWAY_PAIRING_TIMEOUT: Final = 60
 
+# ==================== 设备SN前缀 ====================
+DEVICE_SN_PREFIX_WIND_LOCK: Final = "5005"  # 支持内倒/平开模式的LoRa子设备SN前四位
+
 # ==================== 其他 ====================
 MANUFACTURER: Final = "慧尖"
 MODEL: Final = "慧尖开窗器网关"
 VERSION: Final = "1.3.4"
 ICON_GATEWAY: Final = "mdi:gateway"
 ICON_WINDOW_OPENER: Final = "mdi:window-closed"
+
+
+def supports_wind_lock_mode(device_sn: str) -> bool:
+    """判断设备是否支持内倒/平开模式
+
+    只有SN前四位为5005的LoRa子设备才支持内倒功能，
+    5001/5002/5003等设备不支持内倒功能，不创建相关按钮。
+
+    Args:
+        device_sn: 设备序列号
+
+    Returns:
+        bool: True表示支持内倒/平开模式
+    """
+    return device_sn[:4] == DEVICE_SN_PREFIX_WIND_LOCK
 
 
 def get_device_display_name(gateway_sn: str, device_sn: str, device_number: int = None) -> str:

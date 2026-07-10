@@ -21,6 +21,7 @@ from .const import (
     COMMAND_STOP,
     COMMAND_WIND_LOCK_TILT,
     COMMAND_WIND_LOCK_FLAT,
+    supports_wind_lock_mode,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -47,12 +48,17 @@ def _create_device_buttons(hass, device_manager, mqtt_handler, gateway_sn, devic
     entities_to_add = []
     
     # 按钮配置 - 使用序号前缀控制排列顺序（从上到下）
+    # 基础按钮（所有设备都有）
     button_configs = [
         ("open", "① 开启", "mdi:window-open", COMMAND_OPEN),
         ("stop", "② 暂停", "mdi:pause", COMMAND_STOP),
         ("close", "③ 关闭", "mdi:window-closed", COMMAND_CLOSE),
-        ("a", "④ 内倒", "mdi:rotate-3d-variant", COMMAND_A)
     ]
+    # 仅 SN 前缀为 5005 的设备才支持内倒功能
+    if supports_wind_lock_mode(device_sn):
+        button_configs.append(("a", "④ 内倒", "mdi:rotate-3d-variant", COMMAND_A))
+    else:
+        _LOGGER.info("设备 %s (SN前缀: %s) 不支持内倒功能，跳过创建内倒按钮", device_name, device_sn[:4])
     
     # 直接创建所有按钮，不检查实体是否存在
     # 与配对按钮逻辑一致，确保按钮始终可用
@@ -246,8 +252,11 @@ def _fix_entity_categories(hass, gateway_sn, device_sn):
     from homeassistant.helpers.entity_registry import async_get
     entity_registry = async_get(hass)
     
-    # 所有按钮都设为 CONFIG（控制区只保留 Cover）
-    all_button_types = ["open", "stop", "close", "a", "wind_lock_tilt", "wind_lock_flat"]
+    # 基础按钮（所有设备都有）
+    all_button_types = ["open", "stop", "close"]
+    # 仅支持风锁模式的设备才修正 a/wind_lock 按钮的 entity_category
+    if supports_wind_lock_mode(device_sn):
+        all_button_types += ["a", "wind_lock_tilt", "wind_lock_flat"]
     
     for button_type in all_button_types:
         unique_id = f"{gateway_sn}_{device_sn}_{button_type}"
@@ -257,6 +266,29 @@ def _fix_entity_categories(hass, gateway_sn, device_sn):
             if entity_entry and entity_entry.entity_category != EntityCategory.CONFIG:
                 entity_registry.async_update_entity(entity_id, entity_category=EntityCategory.CONFIG)
                 _LOGGER.info("修正配置按钮 entity_category → CONFIG: %s", entity_id)
+
+
+def _cleanup_unsupported_buttons(hass, gateway_sn, device_sn):
+    """清理不支持内倒功能设备的多余按钮实体（④内倒、⑤平开模式、⑥内倒模式）
+    
+    升级前可能已为 5001/5002/5003 等设备创建了内倒/风锁按钮，
+    升级后需要主动从实体注册表中删除这些多余的实体。
+    """
+    if supports_wind_lock_mode(device_sn):
+        return  # 支持风锁模式的设备无需清理
+
+    from homeassistant.helpers.entity_registry import async_get
+    entity_registry = async_get(hass)
+
+    # 需要清理的按钮类型：内倒(toggle)、平开模式、内倒模式
+    buttons_to_clean = ["a", "wind_lock_tilt", "wind_lock_flat"]
+
+    for button_type in buttons_to_clean:
+        unique_id = f"{gateway_sn}_{device_sn}_{button_type}"
+        entity_id = entity_registry.async_get_entity_id("button", DOMAIN, unique_id)
+        if entity_id:
+            entity_registry.async_remove(entity_id)
+            _LOGGER.info("清理不支持内倒功能设备 %s 的多余按钮: %s (类型: %s)", device_sn, entity_id, button_type)
 
 
 async def async_setup_entry(
@@ -326,6 +358,9 @@ async def async_setup_entry(
             
             # 强制修正已有实体的 entity_category（解决注册表缓存旧值的问题）
             _fix_entity_categories(hass, gateway_sn, device_sn)
+
+            # 清理不支持内倒功能设备的多余按钮实体（升级兼容）
+            _cleanup_unsupported_buttons(hass, gateway_sn, device_sn)
             
             # 生成删除按钮的唯一ID
             remove_button_unique_id = f"{gateway_sn}_remove_{device_sn}"
@@ -347,12 +382,16 @@ async def async_setup_entry(
             _LOGGER.debug("为设备 %s 添加删除按钮", device_name)
             
             device_buttons = _create_device_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, str(entry.entry_id))
-            _LOGGER.debug("设备 %s 创建了 %d 个按钮", device_sn, len(device_buttons))
+            _LOGGER.debug("设备 %s 创建了 %d 个基础按钮", device_sn, len(device_buttons))
             entities.extend(device_buttons)
             
-            # 创建风锁模式按钮（内倒模式、平开模式）- 不设置 entity_category，独立显示
-            wind_lock_buttons = _create_wind_lock_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, str(entry.entry_id))
-            entities.extend(wind_lock_buttons)
+            # 仅对支持风锁模式（SN前缀为5005）的设备创建平开模式/内倒模式按钮
+            if supports_wind_lock_mode(device_sn):
+                wind_lock_buttons = _create_wind_lock_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, str(entry.entry_id))
+                entities.extend(wind_lock_buttons)
+                _LOGGER.debug("设备 %s 创建了 %d 个风锁模式按钮", device_sn, len(wind_lock_buttons))
+            else:
+                _LOGGER.info("设备 %s (SN前缀: %s) 不支持风锁模式，跳过创建平开/内倒模式按钮", device_name, device_sn[:4])
     
     # 定义设备添加回调函数
     async def on_device_added(device_sn: str, device_name: str, device_type: str):
@@ -363,6 +402,9 @@ async def async_setup_entry(
             
             # 强制修正已有实体的 entity_category
             _fix_entity_categories(hass, gateway_sn, device_sn)
+
+            # 清理不支持内倒功能设备的多余按钮实体（升级兼容）
+            _cleanup_unsupported_buttons(hass, gateway_sn, device_sn)
             
             # 检查删除按钮是否已存在
             remove_unique_id = f"{gateway_sn}_remove_{device_sn}"
@@ -385,15 +427,17 @@ async def async_setup_entry(
             # 检查设备按钮是否已存在（用 open 按钮作代表检查）
             open_unique_id = f"{gateway_sn}_{device_sn}_open"
             if not entity_registry.async_get_entity_id("button", DOMAIN, open_unique_id):
-                # 为设备创建所有按钮
+                # 为设备创建所有基础按钮（含④内倒判断）
                 device_buttons = _create_device_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, str(entry.entry_id))
                 entities_to_add.extend(device_buttons)
             
-            # 检查风锁模式按钮是否已存在
-            wind_lock_tilt_unique_id = f"{gateway_sn}_{device_sn}_wind_lock_tilt"
-            if not entity_registry.async_get_entity_id("button", DOMAIN, wind_lock_tilt_unique_id):
-                wind_lock_buttons = _create_wind_lock_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, str(entry.entry_id))
-                entities_to_add.extend(wind_lock_buttons)
+            # 仅对支持风锁模式（SN前缀为5005）的设备创建平开模式/内倒模式按钮
+            if supports_wind_lock_mode(device_sn):
+                # 检查风锁模式按钮是否已存在
+                wind_lock_tilt_unique_id = f"{gateway_sn}_{device_sn}_wind_lock_tilt"
+                if not entity_registry.async_get_entity_id("button", DOMAIN, wind_lock_tilt_unique_id):
+                    wind_lock_buttons = _create_wind_lock_buttons(hass, device_manager, mqtt_handler, gateway_sn, device_sn, device_name, str(entry.entry_id))
+                    entities_to_add.extend(wind_lock_buttons)
             
             # 只有当有实体需要添加时才调用async_add_entities
             if entities_to_add:
