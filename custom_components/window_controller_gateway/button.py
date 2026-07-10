@@ -113,8 +113,8 @@ class BaseWindowControllerButton(WindowControllerBaseEntity, ButtonEntity):
         self.entry_id = entry_id
         # 确保按钮始终可用，不会变成灰色
         self._attr_available = True
-        # 不设置 entity_category，使按钮出现在控制区域
-        # HA 会按平台类型分卡片：Cover 一张卡片，Button 一张卡片
+        # 设为配置类，控制区只保留 Cover
+        self._attr_entity_category = EntityCategory.CONFIG
     
     @property
     def device_info(self) -> DeviceInfo:
@@ -246,21 +246,10 @@ def _fix_entity_categories(hass, gateway_sn, device_sn):
     from homeassistant.helpers.entity_registry import async_get
     entity_registry = async_get(hass)
     
-    # 控制区按钮（无 entity_category）
-    control_button_types = ["open", "stop", "close", "a"]
-    # 配置区按钮（CONFIG）
-    config_button_types = ["wind_lock_tilt", "wind_lock_flat"]
+    # 所有按钮都设为 CONFIG（控制区只保留 Cover）
+    all_button_types = ["open", "stop", "close", "a", "wind_lock_tilt", "wind_lock_flat"]
     
-    for button_type in control_button_types:
-        unique_id = f"{gateway_sn}_{device_sn}_{button_type}"
-        entity_id = entity_registry.async_get_entity_id("button", DOMAIN, unique_id)
-        if entity_id:
-            entity_entry = entity_registry.entities.get(entity_id)
-            if entity_entry and entity_entry.entity_category is not None:
-                entity_registry.async_update_entity(entity_id, entity_category=None)
-                _LOGGER.info("修正控制按钮 entity_category → None: %s", entity_id)
-    
-    for button_type in config_button_types:
+    for button_type in all_button_types:
         unique_id = f"{gateway_sn}_{device_sn}_{button_type}"
         entity_id = entity_registry.async_get_entity_id("button", DOMAIN, unique_id)
         if entity_id:
