@@ -116,7 +116,8 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
             r_travel = attributes.get("r_travel")
             if r_travel is not None:
                 try:
-                    return int(r_travel)
+                    # 裁剪到 HA Cover 实体要求的 0-100 范围
+                    return max(0, min(100, int(r_travel)))
                 except (ValueError, TypeError):
                     return None
         return None

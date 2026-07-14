@@ -910,9 +910,11 @@ class WindowControllerDeviceManager:
         entity_registry = async_get_entity_registry(self.hass)
         # 基础按钮别名（所有设备都有）
         button_name_map = {"open": "开启", "stop": "暂停", "close": "关闭"}
-        # 仅支持风锁模式的设备才有内倒按钮别名
+        # 仅支持风锁模式的设备才有内倒及风锁模式按钮别名
         if supports_wind_lock_mode(device_sn):
             button_name_map["a"] = "内倒"
+            button_name_map["wind_lock_flat"] = "平开模式"
+            button_name_map["wind_lock_tilt"] = "内倒模式"
         for button_type, button_name in button_name_map.items():
             unique_id = f"{self.gateway_sn}_{device_sn}_{button_type}"
             entity_id = entity_registry.async_get_entity_id("button", DOMAIN, unique_id)

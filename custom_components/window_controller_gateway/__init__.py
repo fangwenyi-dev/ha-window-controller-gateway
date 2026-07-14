@@ -512,8 +512,10 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
                     dm = data.get("device_manager")
                     if dm:
                         for device in dm.get_all_devices():
-                            if device_id == device.get("sn", "") or device.get("sn", "") in device_id:
-                                device_sn = device.get("sn")
+                            device_sn_candidate = device.get("sn", "")
+                            # 使用精确匹配：device_id 等于 SN，或 SN 是 device_id 按 _ 分割后的某一段
+                            if device_id == device_sn_candidate or device_sn_candidate in device_id.split("_"):
+                                device_sn = device_sn_candidate
                                 break
                         if device_sn:
                             break

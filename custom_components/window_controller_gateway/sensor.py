@@ -17,7 +17,8 @@ from .const import (
     CONF_GATEWAY_SN,
     CONF_GATEWAY_NAME,
     DEFAULT_GATEWAY_NAME,
-    MANUFACTURER
+    MANUFACTURER,
+    SENSOR_TIMEOUT_MINUTES,
 )
 from .base_entity import WindowControllerBaseEntity
 
@@ -89,8 +90,8 @@ class WindowControllerBatterySensor(WindowControllerBaseEntity, SensorEntity):
                 self.last_update_time = datetime.now()
                 _LOGGER.debug("设备 %s 电池电压更新: %.1fV", self.device_sn, voltage)
         
-        # 检查是否超过15分钟没有更新
-        if self.last_update_time and (datetime.now() - self.last_update_time) > timedelta(minutes=15):
+        # 检查是否超过设定时间没有更新
+        if self.last_update_time and (datetime.now() - self.last_update_time) > timedelta(minutes=SENSOR_TIMEOUT_MINUTES):
             self._attr_native_value = None
             _LOGGER.debug("设备 %s 电池电压数据超时", self.device_sn)
     
@@ -168,8 +169,8 @@ class WindowControllerStatusSensor(WindowControllerBaseEntity, SensorEntity):
                     self.last_update_time = datetime.now()
                     _LOGGER.debug("设备 %s 状态根据r_travel更新为: %s", self.device_sn, new_status)
         
-        # 检查是否超过15分钟没有更新
-        if self.last_update_time and (datetime.now() - self.last_update_time) > timedelta(minutes=15):
+        # 检查是否超过设定时间没有更新
+        if self.last_update_time and (datetime.now() - self.last_update_time) > timedelta(minutes=SENSOR_TIMEOUT_MINUTES):
             self._attr_native_value = None
 
     async def async_update(self) -> None:
