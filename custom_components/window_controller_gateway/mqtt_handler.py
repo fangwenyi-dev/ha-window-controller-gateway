@@ -1182,7 +1182,10 @@ class WindowControllerMQTTHandler:
         device_sn = data.get("sn")
         if device_sn:
             # 解析设备上报的状态
-            status = data.get("status", "unknown")
+            # 不使用 "unknown" 作为默认值，避免仅上报电池电压时覆盖设备已有的开/关状态。
+            # 当 status 为 None 时，update_device_status 不会覆盖设备的状态字段，
+            # 与 _update_device_attributes（002 处理器）的逻辑保持一致。
+            status = data.get("status")
             attributes = {}
             
             # 提取上报的属性
