@@ -82,19 +82,7 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
 
     @property
     def is_closed(self):
-        """从设备管理器读取实际状态，无数据时返回None"""
-        device = self.device_manager.get_device(self.device_sn)
-        if device:
-            status = device.get("status")
-            if status == "closed":
-                return True
-            if status == "open":
-                return False
-            # 无明确状态时尝试从 r_travel 推断
-            attributes = device.get("attributes", {})
-            r_travel = attributes.get("r_travel")
-            if r_travel is not None:
-                return r_travel == 0
+        """始终返回None，HA不知道开闭状态，所以所有按钮都可点击"""
         return None
 
     @property
@@ -109,18 +97,32 @@ class WindowControllerCover(WindowControllerBaseEntity, CoverEntity):
 
     @property
     def current_cover_position(self):
-        """从设备属性读取位置百分比，无数据时返回None"""
+        """始终返回None，HA不知道位置，所以所有按钮都可点击
+
+        注意：如果返回 0，HA 会自动灰掉关闭按钮；
+        如果返回 100，HA 会自动灰掉打开按钮。
+        因此必须返回 None 来保证所有按钮始终可用。
+        位置信息通过 extra_state_attributes 供用户查看。
+        """
+        return None
+
+    @property
+    def extra_state_attributes(self):
+        """返回额外状态属性，供用户查看设备实际位置和状态"""
+        attrs = {}
         device = self.device_manager.get_device(self.device_sn)
         if device:
+            status = device.get("status")
+            if status:
+                attrs["device_status"] = status
             attributes = device.get("attributes", {})
             r_travel = attributes.get("r_travel")
             if r_travel is not None:
                 try:
-                    # 裁剪到 HA Cover 实体要求的 0-100 范围
-                    return max(0, min(100, int(r_travel)))
+                    attrs["position"] = max(0, min(100, int(r_travel)))
                 except (ValueError, TypeError):
-                    return None
-        return None
+                    pass
+        return attrs
 
     async def async_update(self) -> None:
         """定期更新状态，防止实体被HA标记为unavailable"""
