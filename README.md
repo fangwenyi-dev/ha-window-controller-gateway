@@ -223,6 +223,16 @@ data:
 
 ## 版本历史
 
+### v1.3.5
+- 修复: P1 — Cover `is_closed` / `current_cover_position` 返回实际状态导致 HA 自动灰掉按钮，恢复为返回 `None` 保证所有按钮始终可点击
+- 修复: P1 — `_handle_ctype_005` 无 status 字段时用 `"unknown"` 覆盖设备已有状态，改为 `data.get("status")` 不设默认值
+- 修复: P1 — `current_cover_position` 未裁剪 `r_travel` 到 0-100 范围
+- 修复: P1 — `handle_transfer_device` 用 `in` 模糊匹配 SN，改为精确匹配
+- 修复: P2 — `rename_device` 未同步更新风锁按钮别名
+- 修复: P2 — 传感器超时阈值硬编码，改用 `SENSOR_TIMEOUT_MINUTES` 常量
+- 新增: `extra_state_attributes` 暴露设备实际位置和状态，供用户查看但不影响按钮可用性
+- 新增: SN 前缀 `5005` 条件化创建内倒/平开模式按钮
+
 ### v1.3.4
 - 修复: P0 — `_update_device_attributes` 仅收到电池数据时误判设备状态为 "open"
 - 修复: P0 — 迁移无限循环，调度后立即清除 `migration_info` 防止重载时重复触发
