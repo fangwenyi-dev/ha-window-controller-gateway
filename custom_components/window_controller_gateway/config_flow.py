@@ -318,16 +318,19 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.error("Failed to setup MQTT handler")
                 return False
 
-            # Test connection
-            connected = await mqtt_handler.check_connection()
+            # 发送发现命令，触发网关上报
+            await mqtt_handler.check_connection()
 
-            # Give the gateway a moment to respond
+            # 等待网关响应（网关在线时会回复 002 消息，handle_gateway_response 会设置 connected=True）
             await asyncio.sleep(DEVICE_SETUP_DELAY)
+
+            # 检查网关是否实际响应
+            connected = mqtt_handler.connected
 
             if connected:
                 _LOGGER.info("Gateway connectivity test passed")
             else:
-                _LOGGER.warning("Gateway connectivity test failed")
+                _LOGGER.warning("Gateway connectivity test failed (no response from gateway)")
 
             return connected
 

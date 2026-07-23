@@ -142,17 +142,28 @@ class WindowControllerMQTTHandler:
             while True:
                 await asyncio.sleep(GATEWAY_CHECK_INTERVAL)  # 每30秒检查一次
                 try:
-                    # 检查是否超过超时时间没有收到上报
+                    should_go_offline = False
+                    reason = ""
+
                     if self.last_gateway_report_time:
+                        # 有上报记录：检查是否超时
                         time_diff = datetime.now() - self.last_gateway_report_time
-                        if time_diff.total_seconds() > GATEWAY_TIMEOUT_SECONDS:  # 网关超时时间
-                            if self.connected:
-                                self.connected = False
-                                self._notify_status_change()
-                                _LOGGER.warning("网关 %s 超过%s秒未上报，标记为离线", self.gateway_sn, GATEWAY_TIMEOUT_SECONDS)
-                                self._schedule_async_task(
-                                    self.device_manager.update_gateway_status("offline")
-                                )
+                        if time_diff.total_seconds() > GATEWAY_TIMEOUT_SECONDS:
+                            should_go_offline = True
+                            reason = f"超过{GATEWAY_TIMEOUT_SECONDS}秒未上报"
+                    else:
+                        # 从未收到网关上报：如果当前标记为在线，属于误判
+                        if self.connected:
+                            should_go_offline = True
+                            reason = "从未收到网关上报消息"
+
+                    if should_go_offline and self.connected:
+                        self.connected = False
+                        self._notify_status_change()
+                        _LOGGER.warning("网关 %s %s，标记为离线", self.gateway_sn, reason)
+                        self._schedule_async_task(
+                            self.device_manager.update_gateway_status("offline")
+                        )
                 except Exception as e:
                     _LOGGER.error("检查网关超时出错: %s", e)
         except asyncio.CancelledError:
@@ -717,11 +728,12 @@ class WindowControllerMQTTHandler:
                 _LOGGER.debug("清理设备 %s 的回调条目", device_sn)
     
     async def check_connection(self):
-        """检查MQTT连接状态
+        """检查MQTT连接状态并发送发现命令
 
-        发送标准 $SH 协议的 002 发现命令验证 MQTT broker 连通性。
-        publish 成功即认为连接正常（与原始行为一致），网关离线检测
-        由 _check_gateway_timeout 超时机制负责。
+        向网关发送 002 发现命令，触发网关上报状态。
+        publish 成功仅代表 MQTT broker 可达，不代表网关设备在线。
+        网关在线状态由 handle_gateway_response 收到网关消息时设置，
+        网关离线检测由 _check_gateway_timeout 超时机制负责。
         """
         try:
             # 使用标准 $SH 协议格式发送发现命令
@@ -746,18 +758,13 @@ class WindowControllerMQTTHandler:
                 False
             )
 
-            # publish 成功即认为 MQTT broker 可达，标记为在线
-            if not self.connected:
-                self.connected = True
-                _LOGGER.debug("MQTT连接状态正常")
-                self._notify_status_change()
-
-                self._schedule_async_task(
-                    self.device_manager.update_gateway_status("online")
-                )
+            # publish 成功仅代表 MQTT broker 可达，不设置 connected = True。
+            # 网关在线状态只在收到网关上报消息时（handle_gateway_response）设置。
+            _LOGGER.debug("发现命令已发送，等待网关响应")
         except Exception as e:
             _LOGGER.error("MQTT连接检查失败: %s", e)
 
+            # MQTT broker 不可达时，网关必定无法通信
             if self.connected:
                 self.connected = False
                 self._notify_status_change()
@@ -830,9 +837,9 @@ class WindowControllerMQTTHandler:
         # 2. 并行处理后续流程
         tasks = []
         
-        # 任务1: 更新网关状态
-        tasks.append(self.device_manager.update_gateway_status("online"))
-        _LOGGER.debug("快速发现: 添加网关状态更新任务")
+        # 任务1: 不再无条件标记网关在线。
+        # 网关在线状态由 handle_gateway_response 收到网关消息时自动设置。
+        # 此处只发送发现命令，等待网关响应。
         
         # 任务2: 批量查询所有已知设备状态（预查询）
         device_sns = list(self.device_manager.devices.keys())
