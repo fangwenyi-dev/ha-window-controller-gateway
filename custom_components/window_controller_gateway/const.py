@@ -124,6 +124,10 @@ INITIAL_RETRY_DELAY: Final = 5
 RESTART_DELAY: Final = 1
 GATEWAY_PAIRING_TIMEOUT: Final = 60
 
+# ==================== 命令重发机制 ====================
+COMMAND_ACK_TIMEOUT: Final = 5        # 等待网关回复的超时时间（秒）
+COMMAND_MAX_RETRIES: Final = 2        # 最大发送次数（首发1次 + 最多重发1次）
+
 # ==================== 设备SN前缀 ====================
 DEVICE_SN_PREFIX_WIND_LOCK: Final = "5005"  # 支持内倒/平开模式的LoRa子设备SN前四位
 
