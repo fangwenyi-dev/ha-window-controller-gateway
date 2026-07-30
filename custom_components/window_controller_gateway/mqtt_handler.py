@@ -254,13 +254,10 @@ class WindowControllerMQTTHandler:
                         "002": self._handle_ctype_002,
                         "003": self._handle_ctype_003,
                         "004": self._handle_ctype_004,
-                        "005": self._handle_ctype_005,
-                        "006": self._handle_ctype_006,
-                        "007": self._handle_ctype_007,
-                        "008": self._handle_ctype_008,
-                        "009": self._handle_ctype_009,
-                        "010": self._handle_ctype_010
-                    }
+"005": self._handle_ctype_005,
+"006": self._handle_ctype_006,
+"007": self._handle_ctype_007
+}
                     
                     if ctype in ctype_handlers:
                         self._schedule_async_task(
@@ -440,7 +437,8 @@ class WindowControllerMQTTHandler:
             
             # 根据协议文档，使用标准的协议格式
             # 注意：001/002 是网关主动发起的消息，HA 发送后网关不会响应
-            # HA 只能主动发送 003（配对）和 004（控制）
+            # HA 可主动发送 003（配对）、004（控制）、006、007
+            # 001/002/005 是网关主动发起，HA 发了网关不响应
             command_map = {
                 # "bind_gateway": "001",  # 001: 网关主动发起，HA 发了无效
                 "start_pairing": "003",  # 003: HA 主动发起配对
@@ -550,9 +548,9 @@ class WindowControllerMQTTHandler:
                 )
                 _LOGGER.info("发送协议命令: %s (类型: %s) 到设备: %s, 参数: %s", command, ctype, device_sn, payload["data"])
 
-                # 003/004 是 HA 主动下发的命令，需要网关回复。
+                # 003/004/006/007 是 HA 主动下发的命令，需要网关回复。
                 # 如果网关未回复，通过定时器触发重发。
-                if ctype in ("003", "004"):
+                if ctype in ("003", "004", "006", "007"):
                     self._pending_commands[sent_command_id] = {
                         "payload": payload,
                         "retry_count": 1,  # 首次发送算第 1 次
@@ -798,7 +796,7 @@ class WindowControllerMQTTHandler:
           {"head":"$SH","ctype":"003","id":<id>,"sn":"<网关SN>",
            "data":{"devtype":"<设备类型>","sn":"<设备SN>","bind":0}}
 
-        解绑的网关回复也是 003（errcode=0, sn=设备SN），
+        解绑的网关回复走 003（errcode=0），
         _handle_ctype_003 收到回复后通过 _clear_pending_command 取消重发定时器。
         """
         # 获取设备实际类型，回退到 DEVICE_TYPE_CURTAIN_CTR
@@ -834,7 +832,7 @@ class WindowControllerMQTTHandler:
             _LOGGER.info("解绑命令已发送，设备SN: %s", device_sn)
             _LOGGER.debug("解绑命令payload: %s", payload)
 
-            # 记录待回复命令（解绑回复也走 003，通过 command_id 精确匹配）
+            # 记录待回复命令（解绑回复走 003，_handle_ctype_003 通过 command_id 精确匹配清除）
             self._pending_commands[sent_command_id] = {
                 "payload": payload,
                 "retry_count": 1,
@@ -1007,9 +1005,9 @@ class WindowControllerMQTTHandler:
     async def _send_ack(self, ctype: str, payload: dict):
         """发送确认响应到网关（用于网关主动发起的消息）
 
-        网关主动发起的消息（001/002/005/006/007/008/009/010）需要 HA 回复 errcode:0 确认，
-        否则网关会重复重发。
-        HA 主动下发的命令（003/004）由网关回复，HA 不需要再回复。
+网关主动发起的消息（001/002/005）需要 HA 回复 errcode:0 确认，
+否则网关会重复重发。
+HA 主动下发的命令（003/004/006/007）由网关回复，HA 不需要再回复。
         """
         response_payload = {
             "head": PROTOCOL_HEAD,
@@ -1212,11 +1210,11 @@ class WindowControllerMQTTHandler:
         """处理协议类型003：绑定子设备
 
         协议流程：
-        - 添加设备：HA 发 003(bind=1) → 网关回复 003(errcode=0, sn=真实设备SN)
-        - 解绑设备：HA 发 003(bind=0) → 网关回复 002(data={})
+        - 添加设备：HA 发 003(bind=1) → 网关回复 003(errcode=0, sn=设备SN)
+        - 解绑设备：HA 发 003(bind=0) → 网关回复 003(errcode=0)
 
-        因此 _handle_ctype_003 收到的回复全部是"添加设备"的回复，
-        收到 errcode=0 就直接添加设备，无需判断绑定/解绑。
+        收到 003 回复后，errcode=0 且包含 sn 字段时添加设备（配对成功）。
+        解绑回复不包含 sn 字段，不会误触发添加逻辑。
         """
         # 收到网关回复，取消重发定时器
         self._clear_pending_command(payload.get("id", 0))
@@ -1338,42 +1336,32 @@ class WindowControllerMQTTHandler:
         # 回复 005 确认，告知网关已收到设备上报，避免网关重复重发
         await self._send_ack("005", payload)
 
-    async def _handle_ctype_006(self, payload, ctype, data):
-        """处理协议类型006：批量设备状态上报
+async def _handle_ctype_006(self, payload, ctype, data):
+"""处理协议类型006：HA 主动发起命令的网关回复
 
-        006 是网关主动上报，HA 需要回复确认。
-        """
-        _LOGGER.debug("批量设备状态上报: %s", data)
-        await self._send_ack("006", payload)
+006 是 HA 主动下发的命令，网关回复 errcode:0 表示已收到。
+HA 不需要回复确认，收到回复后取消重发定时器。
+"""
+# 收到网关回复，取消重发定时器
+self._clear_pending_command(payload.get("id", 0))
 
-    async def _handle_ctype_007(self, payload, ctype, data):
-        """处理协议类型007：设备事件上报
+errcode = data.get("errcode", -1)
+if errcode == 0:
+_LOGGER.debug("006 命令执行成功: %s", data)
+else:
+_LOGGER.warning("006 命令执行失败，错误码: %d, data: %s", errcode, data)
 
-        007 是网关主动上报，HA 需要回复确认。
-        """
-        _LOGGER.debug("设备事件上报: %s", data)
-        await self._send_ack("007", payload)
+async def _handle_ctype_007(self, payload, ctype, data):
+"""处理协议类型007：HA 主动发起命令的网关回复
 
-    async def _handle_ctype_008(self, payload, ctype, data):
-        """处理协议类型008：网关配置更新
+007 是 HA 主动下发的命令，网关回复 errcode:0 表示已收到。
+HA 不需要回复确认，收到回复后取消重发定时器。
+"""
+# 收到网关回复，取消重发定时器
+self._clear_pending_command(payload.get("id", 0))
 
-        008 是网关主动上报，HA 需要回复确认。
-        """
-        _LOGGER.debug("网关配置更新: %s", data)
-        await self._send_ack("008", payload)
-
-    async def _handle_ctype_009(self, payload, ctype, data):
-        """处理协议类型009：设备配置更新
-
-        009 是网关主动上报，HA 需要回复确认。
-        """
-        _LOGGER.debug("设备配置更新: %s", data)
-        await self._send_ack("009", payload)
-
-    async def _handle_ctype_010(self, payload, ctype, data):
-        """处理协议类型010：系统消息
-
-        010 是网关主动上报，HA 需要回复确认。
-        """
-        _LOGGER.debug("系统消息: %s", data)
-        await self._send_ack("010", payload)
+errcode = data.get("errcode", -1)
+if errcode == 0:
+_LOGGER.debug("007 命令执行成功: %s", data)
+else:
+_LOGGER.warning("007 命令执行失败，错误码: %d, data: %s", errcode, data)
