@@ -211,14 +211,11 @@ class WindowControllerDeviceManager:
             if gateway_data and isinstance(gateway_data, dict):
                 mqtt_handler = gateway_data.get("mqtt_handler")
                 if mqtt_handler:
-                    # 立即发送快速设备发现命令（1秒延迟）
+                    # 协议说明：002 是网关主动发起的上报，HA 发送 discover 网关不会响应
+                    # 设备发现依赖网关主动上报 002 消息，HA 被动接收
                     async def send_quick_discovery():
                         await asyncio.sleep(GATEWAY_READY_DELAY)  # 短暂延迟，确保网关就绪
-                        try:
-                            await mqtt_handler.send_command(self.gateway_sn, "discover")
-                            _LOGGER.debug("已发送极速设备发现命令")
-                        except Exception as e:
-                            _LOGGER.debug("发送极速发现命令失败: %s", e)
+                        _LOGGER.debug("设备发现依赖网关主动上报（002），HA 无法主动触发")
                     
                     self._spawn_background_task(send_quick_discovery())
         except Exception as e:
@@ -316,53 +313,13 @@ class WindowControllerDeviceManager:
             _LOGGER.debug("异步注册设备失败（可忽略）: %s", e)
     
     async def _trigger_immediate_status_query(self):
-        """立即触发设备状态查询"""
-        try:
-            # 等待，确保MQTT处理器就绪
-            await asyncio.sleep(DEVICE_SETUP_DELAY)
-            
-            gateway_data = self.hass.data[DOMAIN].get(self.entry.entry_id)
-            if not gateway_data:
-                return
-                
-            mqtt_handler = gateway_data.get("mqtt_handler")
-            if not mqtt_handler:
-                return
-            
-            # 查询所有设备状态（批量进行，使用自适应间隔）
-            device_sns = list(self.devices.keys())
-            if not device_sns:
-                return
-                
-            _LOGGER.info("开始极速查询 %d 个设备状态", len(device_sns))
-            
-            # 计算自适应查询间隔
-            query_interval = self._calculate_adaptive_query_interval(len(device_sns))
-            _LOGGER.info("使用自适应查询间隔: %.2f秒", query_interval)
-            
-            # 实现批量查询
-            batch_size = self._calculate_batch_size(len(device_sns))
-            device_batches = [device_sns[i:i+batch_size] for i in range(0, len(device_sns), batch_size)]
-            
-            async def query_device_batch(batch):
-                """查询一批设备状态"""
-                for device_sn in batch:
-                    async with self._status_query_semaphore:
-                        try:
-                            await mqtt_handler.send_command(device_sn, "status")
-                            await asyncio.sleep(query_interval)  # 使用自适应查询间隔
-                        except Exception as e:
-                            _LOGGER.debug("极速查询设备状态失败 %s: %s", device_sn, e)
-            
-            # 并行执行批次查询
-            batch_tasks = [query_device_batch(batch) for batch in device_batches]
-            await asyncio.gather(*batch_tasks, return_exceptions=True)
-            
-            _LOGGER.info("极速设备状态查询完成")
-            
-        except Exception as e:
-            _LOGGER.error("触发极速状态查询失败: %s", e)
-        
+        """立即触发设备状态查询
+
+        协议说明：005 是网关主动发起的设备状态上报，HA 无法主动查询设备状态。
+        此方法保留为空实现，设备状态更新依赖网关主动发送 005 消息。
+        """
+        _LOGGER.info("设备状态更新依赖网关主动上报（005），HA 无法主动查询")
+    
     async def register_gateway_device(self):
         """注册网关设备"""
         device_registry = await self._get_device_registry()
@@ -801,8 +758,8 @@ class WindowControllerDeviceManager:
             
             _LOGGER.info("设备移除流程完成: %s", device_sn)
             
-            # 通知MQTT处理器，设备已被删除
-            # 这样当设备重新被发现时，可以重新添加
+            # 协议说明：002 是网关主动发起的上报，HA 无法主动触发设备发现
+            # 设备删除后，设备列表更新依赖网关下一次主动上报 002 消息
             try:
                 # P2 修复：使用 hass.async_create_task（hass.create_task 已弃用），
                 # 并直接通过 entry_id 查找 MQTT 处理器，避免不必要的迭代
@@ -810,6 +767,7 @@ class WindowControllerDeviceManager:
                 if gateway_data and isinstance(gateway_data, dict):
                     mqtt_handler = gateway_data.get("mqtt_handler")
                     if mqtt_handler:
+                        # trigger_discovery 现在是空实现，仅记录日志
                         self.hass.async_create_task(mqtt_handler.trigger_discovery())
             except KeyError as e:
                 _LOGGER.error("访问DOMAIN数据失败: %s", e)

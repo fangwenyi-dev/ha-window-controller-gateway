@@ -157,7 +157,11 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             _LOGGER.error("设备 %s 重命名失败: %s", device_id, e)
 
     async def handle_refresh_devices(call: ServiceCall) -> None:
-        """处理刷新设备服务调用 - 优化版，减少阻塞"""
+        """处理刷新设备服务调用
+
+        协议说明：002 是网关主动发起的上报，HA 无法主动触发设备发现。
+        设备列表更新完全依赖网关主动发送 002 消息，HA 被动接收。
+        """
         device_id = call.data.get("device_id")
 
         if not device_id:
@@ -169,21 +173,13 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             _LOGGER.error("未找到设备ID %s 对应的网关", device_id)
             return
 
-        # 使用异步任务执行，减少阻塞
-        async def refresh_devices_async():
-            try:
-                await gateway_data["mqtt_handler"].trigger_discovery()
-                _LOGGER.info("已触发网关 %s 的设备发现", gateway_sn)
-            except (ConnectionError, TimeoutError) as e:
-                _LOGGER.error("网关 %s 连接或超时错误: %s", gateway_sn, e)
-            except (KeyError, AttributeError) as e:
-                _LOGGER.error("网关 %s MQTT处理器未找到或配置错误: %s", gateway_sn, e)
-            except Exception as e:
-                _LOGGER.error("网关 %s 触发设备发现失败: %s", gateway_sn, e)
-        
-        # 创建异步任务，立即返回
-        hass.async_create_task(refresh_devices_async())
-        _LOGGER.info("刷新设备服务调用已提交，设备ID: %s", device_id)
+        # 协议说明：002 是网关主动发起，HA 无法主动触发设备发现
+        # 设备列表更新依赖网关定期主动上报 002 消息
+        _LOGGER.info(
+            "网关 %s 的设备列表更新依赖网关主动上报（002），HA 无法主动触发。"
+            "请等待网关下一次自动上报，或重启网关触发上报。",
+            gateway_sn
+        )
 
     async def handle_set_position(call: ServiceCall) -> None:
         """处理设置位置服务调用 - 优化版，减少阻塞"""

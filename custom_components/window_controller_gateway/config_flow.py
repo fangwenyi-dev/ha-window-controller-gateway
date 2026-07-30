@@ -318,13 +318,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.error("Failed to setup MQTT handler")
                 return False
 
-            # 发送发现命令，触发网关上报
-            await mqtt_handler.check_connection()
+            # 协议说明：002 是网关主动发起的上报，HA 发送 002 网关不会响应。
+            # 连接验证改为：只检查 MQTT 订阅是否成功（setup 返回 True 即代表订阅成功），
+            # 然后等待网关主动上报（网关在线时会主动发送 001/002 消息，
+            # handle_gateway_response 会设置 connected=True）。
+            # 不再发送无效的 002 发现命令。
+            # await mqtt_handler.check_connection()  # 旧逻辑：发送 002，网关不响应
 
-            # 等待网关响应（网关在线时会回复 002 消息，handle_gateway_response 会设置 connected=True）
+            # 等待网关主动上报（网关在线时会主动发送 001/002 消息）
             await asyncio.sleep(DEVICE_SETUP_DELAY)
 
-            # 检查网关是否实际响应
+            # 检查网关是否主动上报了消息（connected 由 handle_gateway_response 设置）
             connected = mqtt_handler.connected
 
             if connected:

@@ -433,17 +433,19 @@ class WindowControllerMQTTHandler:
                         return False
             
             # 根据协议文档，使用标准的协议格式
+            # 注意：001/002 是网关主动发起的消息，HA 发送后网关不会响应
+            # HA 只能主动发送 003（配对）和 004（控制）
             command_map = {
-                "bind_gateway": "001",  # 001: 绑定网关
-                "start_pairing": "003",  # 003: 绑定子设备
-                "discover": "002",  # 002: 网关状态上报/设备发现
-                "open": "004",  # 004: 设备控制
-                "close": "004",  # 004: 设备控制
-                "stop": "004",  # 004: 设备控制
-                "a": "004",  # 004: 设备控制
-                "set_position": "004",  # 004: 设备控制
-                "wind_lock_tilt": "004",   # 004: 设备控制 - 内倒模式
-                "wind_lock_flat": "004"    # 004: 设备控制 - 平开模式
+                # "bind_gateway": "001",  # 001: 网关主动发起，HA 发了无效
+                "start_pairing": "003",  # 003: HA 主动发起配对
+                # "discover": "002",     # 002: 网关主动发起，HA 发了无效
+                "open": "004",  # 004: HA 主动发起控制
+                "close": "004",  # 004: HA 主动发起控制
+                "stop": "004",  # 004: HA 主动发起控制
+                "a": "004",  # 004: HA 主动发起控制
+                "set_position": "004",  # 004: HA 主动发起控制
+                "wind_lock_tilt": "004",   # 004: HA 主动发起控制 - 内倒模式
+                "wind_lock_flat": "004"    # 004: HA 主动发起控制 - 平开模式
             }
             
             ctype = command_map.get(command, "004")
@@ -515,9 +517,10 @@ class WindowControllerMQTTHandler:
                     payload["data"]["value"] = COMMAND_VALUE_WIND_LOCK_TILT
                 else:
                     payload["data"]["value"] = COMMAND_VALUE_WIND_LOCK_FLAT
-            elif command == "status":
-                # 状态查询命令 - 必须包含设备SN，网关才能知道查询哪个设备
-                payload["data"]["sn"] = device_sn
+            # 协议说明：005 是网关主动发起的设备状态上报，HA 无法主动查询设备状态
+            # elif command == "status":
+            #     # 状态查询命令 - 必须包含设备SN，网关才能知道查询哪个设备
+            #     payload["data"]["sn"] = device_sn
             
             # 打印详细的命令信息
             _LOGGER.debug("发送命令到网关: %s, 命令: %s, 设备SN: %s, 载荷: %s", 
@@ -728,41 +731,27 @@ class WindowControllerMQTTHandler:
                 _LOGGER.debug("清理设备 %s 的回调条目", device_sn)
     
     async def check_connection(self):
-        """检查MQTT连接状态并发送发现命令
+        """检查 MQTT broker 连通性（不发 002）
 
-        向网关发送 002 发现命令，触发网关上报状态。
-        publish 成功仅代表 MQTT broker 可达，不代表网关设备在线。
+        协议说明：002 是网关主动发起的上报，HA 发送 002 网关不会响应。
+        此方法仅检查 MQTT broker 是否可达：通过发布一条空消息到网关 req 主题
+        来测试 MQTT 连通性。publish 成功代表 broker 可达，不代表网关设备在线。
         网关在线状态由 handle_gateway_response 收到网关消息时设置，
         网关离线检测由 _check_gateway_timeout 超时机制负责。
         """
         try:
-            # 使用标准 $SH 协议格式发送发现命令
-            payload = {
-                "head": PROTOCOL_HEAD,
-                "ctype": "002",
-                "id": self.command_id,
-                "data": {},
-                "sn": self.gateway_sn
-            }
-
-            # 递增命令ID
-            self.command_id += 1
-            if self.command_id > MAX_COMMAND_ID:
-                self.command_id = 1
-
+            # 仅检查 MQTT broker 连通性：发布空消息到 req 主题
+            # 不使用 002 命令，因为网关不响应 HA 发送的 002
             await mqtt.async_publish(
                 self.hass,
                 self.TOPIC_GATEWAY_REQ,
-                json.dumps(payload),
+                "",
                 1,
                 False
             )
-
-            # publish 成功仅代表 MQTT broker 可达，不设置 connected = True。
-            # 网关在线状态只在收到网关上报消息时（handle_gateway_response）设置。
-            _LOGGER.debug("发现命令已发送，等待网关响应")
+            _LOGGER.debug("MQTT broker 连通性检查通过（broker 可达）")
         except Exception as e:
-            _LOGGER.error("MQTT连接检查失败: %s", e)
+            _LOGGER.error("MQTT broker 连通性检查失败: %s", e)
 
             # MQTT broker 不可达时，网关必定无法通信
             if self.connected:
@@ -818,50 +807,22 @@ class WindowControllerMQTTHandler:
             raise
     
     async def trigger_discovery(self):
-        """触发设备发现 - 使用协议类型002"""
-        # 使用send_command方法发送符合协议要求的设备发现命令
-        await self.send_command(
-            self.gateway_sn,  # 使用网关SN作为设备SN
-            "discover"
-        )
-        _LOGGER.info("设备发现命令已发送")
+        """触发设备发现
+
+        协议说明：002 是网关主动发起的上报，HA 无法主动触发网关上报设备列表。
+        设备发现完全依赖网关主动发送 002 消息，HA 被动接收。
+        此方法保留为空实现，仅记录日志告知调用方。
+        """
+        _LOGGER.info("设备发现依赖网关主动上报（002），HA 无法主动触发")
     
     async def fast_discovery(self):
-        """快速设备发现 - 优化版，添加设备状态预查询逻辑"""
-        start_time = time.time()
-        
-        # 1. 立即发送发现命令
-        await self.send_command(self.gateway_sn, "discover")
-        _LOGGER.debug("快速发现: 已发送发现命令")
-        
-        # 2. 并行处理后续流程
-        tasks = []
-        
-        # 任务1: 不再无条件标记网关在线。
-        # 网关在线状态由 handle_gateway_response 收到网关消息时自动设置。
-        # 此处只发送发现命令，等待网关响应。
-        
-        # 任务2: 批量查询所有已知设备状态（预查询）
-        device_sns = list(self.device_manager.devices.keys())
-        if device_sns:
-            # 分批查询设备状态，避免一次性发送过多命令
-            batch_size = MQTT_BATCH_SIZE
-            for i in range(0, len(device_sns), batch_size):
-                batch_devices = device_sns[i:i+batch_size]
-                for device_sn in batch_devices:
-                    tasks.append(self.send_command(device_sn, "status"))
-                    _LOGGER.debug("快速发现: 添加设备状态预查询任务: %s", device_sn)
-                _LOGGER.debug("快速发现: 批次 %d 预查询 %d 个设备", i//batch_size + 1, len(batch_devices))
-        
-        # 并行执行所有任务
-        if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            # 统计成功和失败的任务
-            success_count = sum(1 for r in results if not isinstance(r, Exception))
-            _LOGGER.debug("快速发现: 并行任务完成，成功: %d，总数: %d", success_count, len(tasks))
-        
-        elapsed_time = time.time() - start_time
-        _LOGGER.info("快速设备发现完成，耗时: %.2f秒，预查询设备数: %d", elapsed_time, len(device_sns))
+        """快速设备发现
+
+        协议说明：002 和 005 都是网关主动发起的上报，HA 无法主动触发。
+        设备发现和状态更新完全依赖网关主动发送 002/005 消息，HA 被动接收。
+        此方法保留为空实现，仅记录日志。
+        """
+        _LOGGER.info("设备发现依赖网关主动上报（002/005），HA 无法主动触发")
     
     async def cleanup(self):
         """清理MQTT资源"""
