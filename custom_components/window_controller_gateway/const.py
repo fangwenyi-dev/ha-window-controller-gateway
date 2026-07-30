@@ -134,7 +134,7 @@ DEVICE_SN_PREFIX_WIND_LOCK: Final = "5005"  # 支持内倒/平开模式的LoRa�
 # ==================== 其他 ====================
 MANUFACTURER: Final = "慧尖"
 MODEL: Final = "慧尖开窗器网关"
-VERSION: Final = "1.3.5"
+VERSION: Final = "1.3.6"
 ICON_GATEWAY: Final = "mdi:gateway"
 ICON_WINDOW_OPENER: Final = "mdi:window-closed"
 
