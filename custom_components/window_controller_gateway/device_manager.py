@@ -177,6 +177,11 @@ class WindowControllerDeviceManager:
                 gateway_match = (mapped_lower == current_lower)
                 
                 if gateway_match and device_sn not in self.devices:
+                    # 跳过手动删除列表中的设备，避免手动删除的设备在重启后复活
+                    if device_sn in self._manually_removed_devices:
+                        _LOGGER.debug("设备 %s 在手动删除列表中，跳过加载", device_sn)
+                        continue
+                    
                     device_name = get_device_display_name(self.gateway_sn, device_sn)
                     
                     # 同步添加到内存字典中
@@ -416,6 +421,16 @@ class WindowControllerDeviceManager:
         
         # 强制设备类型为开窗器，忽略传入的其他类型
         device_type = DEVICE_TYPE_WINDOW_OPENER
+
+        # 设备数量上限检查：防止 MQTT 伪造消息无限注入设备导致
+        # 实体注册表/持久化文件膨胀（DoS）。迁移（force=True）不受限，
+        # 迁移流程内部有独立的容量校验。
+        from .const import MAX_DEVICES_PER_GATEWAY
+        if not force and len(self.devices) >= MAX_DEVICES_PER_GATEWAY:
+            _LOGGER.warning(
+                "设备数量已达上限 %d，拒绝添加新设备: %s", MAX_DEVICES_PER_GATEWAY, device_sn
+            )
+            return None
         
         # 格式化设备名称
         device_name_with_sn = self._format_device_name(device_sn, device_name)
@@ -432,6 +447,7 @@ class WindowControllerDeviceManager:
                 if DEVICE_TO_GATEWAY_MAPPING in self.hass.data[DOMAIN]:
                     device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
                     device_to_gateway_mapping[device_sn] = self.gateway_sn
+                    self._save_device_to_gateway_mapping()
                     _LOGGER.info("已更新设备 %s 的网关映射到 %s", device_sn, self.gateway_sn)
                 
                 # 如果设备在手动删除列表中，从列表中移除
@@ -625,6 +641,7 @@ class WindowControllerDeviceManager:
                     # 忽略大小写比较
                     if existing_gateway_sn.lower() == self.gateway_sn.lower():
                         del device_to_gateway_mapping[device_sn]
+                        self._save_device_to_gateway_mapping()
                         _LOGGER.info("设备 %s 已从网关映射表中删除 (所属网关: %s)", 
                             device_sn, self.gateway_sn)
                     else:
@@ -1056,11 +1073,16 @@ class WindowControllerDeviceManager:
                 continue
             
             # 更新设备关联到新网关
+            # 注意：HA 的 async_update_device 没有 config_entry_id 参数，
+            # 必须用 async_get_or_create 重建关联（含新 config_entry_id 与 via_device）
             try:
-                device_registry.async_update_device(
-                    device.id,
-                    via_device=(DOMAIN, new_gateway_sn),  # 这是关键！
-                    config_entry_id=self.entry.entry_id  # 更新配置条目ID
+                device_registry.async_get_or_create(
+                    config_entry_id=self.entry.entry_id,
+                    identifiers={(DOMAIN, device_sn)},
+                    name=device.name,
+                    manufacturer=MANUFACTURER,
+                    model=self._get_device_model(DEVICE_TYPE_WINDOW_OPENER),
+                    via_device=(DOMAIN, new_gateway_sn)
                 )
                 _LOGGER.info("已更新设备 %s 的网关关联到 %s，配置条目ID: %s", device_sn, new_gateway_sn, self.entry.entry_id)
                 migrated_devices.append(device_sn)
@@ -1119,6 +1141,7 @@ class WindowControllerDeviceManager:
             device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
             for device_sn in migrated_devices:
                 device_to_gateway_mapping[device_sn] = new_gateway_sn  # 更新映射！
+            self._save_device_to_gateway_mapping()
             
             _LOGGER.info("已更新 %d 个设备的网关映射", len(migrated_devices))
         
@@ -1139,7 +1162,10 @@ class WindowControllerDeviceManager:
             for entity_id, entity_entry in entity_registry.entities.items():
                 if entity_entry.platform == DOMAIN and entity_entry.domain == platform:
                     for device_sn in device_sns:
-                        if device_sn in entity_entry.unique_id:
+                        # 边界匹配（device_sn 前后均有下划线），
+                        # 避免 SN 前缀重叠（如 5005 vs 50051）误关联；
+                        # 迁移实体 unique_id 可能仍为旧网关前缀，因此不限定网关前缀
+                        if entity_entry.unique_id and f"_{device_sn}_" in entity_entry.unique_id:
                             new_device = device_registry.async_get_device(
                                 identifiers={(DOMAIN, device_sn)}
                             )
@@ -1276,6 +1302,7 @@ class WindowControllerDeviceManager:
                 if device_sn in device_to_gateway_mapping and device_to_gateway_mapping[device_sn].lower() == old_gateway_sn.lower():
                     del device_to_gateway_mapping[device_sn]
                     _LOGGER.info("已清理设备 %s 的旧网关映射", device_sn)
+            self._save_device_to_gateway_mapping()
         
         # 清理旧网关设备本身
         try:
@@ -1399,6 +1426,7 @@ class WindowControllerDeviceManager:
                 for device_sn in old_gateway_devices:
                     device_to_gateway_mapping[device_sn] = old_gateway_sn
                     _LOGGER.info("已恢复设备 %s 的网关映射到旧网关", device_sn)
+                self._save_device_to_gateway_mapping()
             
             _LOGGER.info("迁移回滚完成")
             return True

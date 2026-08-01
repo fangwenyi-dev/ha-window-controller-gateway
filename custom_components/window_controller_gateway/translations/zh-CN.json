@@ -42,7 +42,8 @@
     "abort": {
       "already_configured": "该网关已配置",
       "updated_existing_gateway": "已更新现有网关配置，开始迁移设备",
-      "ignored": "已忽略该网关"
+      "ignored": "已忽略该网关",
+      "invalid_sn_format": "网关SN格式无效（至少10位字母数字）"
     }
   },
   "options": {

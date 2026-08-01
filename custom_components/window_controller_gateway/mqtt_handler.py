@@ -6,6 +6,7 @@ import random
 import uuid
 import weakref
 import time
+import re
 from datetime import datetime
 from typing import Dict, Any, Optional, Callable, Union
 
@@ -213,6 +214,11 @@ class WindowControllerMQTTHandler:
                     
                     # 如果是来自其他网关的消息，触发网关发现
                     if response_sn.lower() != self.gateway_sn.lower():
+                        # 防御校验：response_sn 来自 MQTT payload（攻击者可控），
+                        # 必须满足 SN 格式（≥10 位字母数字），避免畸形 SN 进入发现/配置流程
+                        if not isinstance(response_sn, str) or not re.match(r"^[a-zA-Z0-9]{10,}$", response_sn):
+                            _LOGGER.warning("收到格式非法的网关SN，忽略: %r", response_sn)
+                            return
                         try:
                             # 快速检查：如果该网关已在配置条目中，跳过发现触发
                             already_configured = False
@@ -261,13 +267,23 @@ class WindowControllerMQTTHandler:
                     }
                     
                     if ctype in ctype_handlers:
-                        self._schedule_async_task(
-                            self._dispatch_with_dedup(
-                                ctype_handlers[ctype](payload, ctype, data),
-                                msg_key,
-                                current_time
+                        msg_id = payload.get("id", 0)
+                        if msg_id in (0, None):
+                            # 网关周期上报（002/005）的 id 可能恒为 0：
+                            # 若按 ctype+id+sn 去重，5 秒窗口内的后续上报会被误杀，
+                            # 导致设备状态/位置更新丢失。id 无效时直接调度
+                            # （处理函数幂等，重复处理无害）。
+                            self._schedule_async_task(
+                                ctype_handlers[ctype](payload, ctype, data)
                             )
-                        )
+                        else:
+                            self._schedule_async_task(
+                                self._dispatch_with_dedup(
+                                    ctype_handlers[ctype](payload, ctype, data),
+                                    msg_key,
+                                    current_time
+                                )
+                            )
                     else:
                         _LOGGER.warning("未知的消息类型: %s", ctype)
                     

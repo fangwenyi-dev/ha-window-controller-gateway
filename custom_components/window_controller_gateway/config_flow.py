@@ -204,6 +204,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         replace_mode = discovery_info.get("replace_mode", False)
         current_gateway_sn = discovery_info.get("current_gateway_sn")
         
+        # 防御校验：SN 缺失或格式非法时直接中止发现流程
+        # （避免 async_set_unique_id(None) 及后续用非法 SN 生成 MQTT 主题）
+        if not isinstance(gateway_sn, str) or not validate_gateway_sn(gateway_sn):
+            _LOGGER.warning("发现流程收到非法网关SN，中止: %r", gateway_sn)
+            return self.async_abort(reason="invalid_sn_format")
+        
         # 检查是否已配置
         await self.async_set_unique_id(gateway_sn)
         self._abort_if_unique_id_configured()
@@ -309,6 +315,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.info("保存迁移信息到数据: %s", migration_info)
                 
                 new_gateway_sn = self.context.get("new_gateway_sn", "")
+                # 防御校验：即使从发现流程绕过 replace 步骤进入，
+                # SN 也必须满足格式（长度 + 字符集），避免畸形 SN 生成非法 MQTT 主题
+                if not new_gateway_sn or not validate_gateway_sn(new_gateway_sn):
+                    _LOGGER.error("新网关SN格式无效，取消迁移: %r", new_gateway_sn)
+                    return self.async_abort(reason="invalid_sn_format")
                 existing_entries = self.hass.config_entries.async_entries(DOMAIN)
                 existing_entry = None
                 
@@ -451,9 +462,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 new_gateway_sn = user_input.get("new_gateway_sn", gateway_sn)  # 使用默认值（当前发现的网关）
 
-            if not old_gateway_sn or len(old_gateway_sn) < 10:
+            if not old_gateway_sn or not validate_gateway_sn(old_gateway_sn):
                 errors["old_gateway_sn"] = "invalid_sn_format"
-            elif not replace_mode and (not new_gateway_sn or len(new_gateway_sn) < 10):
+            elif not replace_mode and (not new_gateway_sn or not validate_gateway_sn(new_gateway_sn)):
                 errors["new_gateway_sn"] = "invalid_sn_format"
             else:
                 # 保存到上下文

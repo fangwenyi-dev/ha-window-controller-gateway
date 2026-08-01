@@ -84,10 +84,16 @@ async def _do_save(hass: HomeAssistant) -> None:
         config_dir = hass.config.config_dir
         data_file = os.path.join(config_dir, PERSISTENT_DATA_FILE)
 
+        # 在事件循环内先做快照（浅拷贝即可，值为字符串/标量），
+        # 避免 executor 线程 json.dump 期间事件循环并发增删设备时
+        # 抛 "dictionary changed size during iteration" 或写入不一致数据
+        mapping_snapshot = dict(hass.data[DOMAIN].get(DEVICE_TO_GATEWAY_MAPPING, {}))
+        removed_snapshot = list(hass.data[DOMAIN].get(GLOBAL_MANUALLY_REMOVED_DEVICES, set()))
+
         data = {
             'schema_version': SCHEMA_VERSION,
-            'device_to_gateway_mapping': hass.data[DOMAIN].get(DEVICE_TO_GATEWAY_MAPPING, {}),
-            'manually_removed_devices': list(hass.data[DOMAIN].get(GLOBAL_MANUALLY_REMOVED_DEVICES, set()))
+            'device_to_gateway_mapping': mapping_snapshot,
+            'manually_removed_devices': removed_snapshot
         }
 
         def _write_file():
