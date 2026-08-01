@@ -895,12 +895,13 @@ async def test_send_command(tr: TestResult):
     else:
         tr.fail("空SN", "空SN应返回False")
 
-    # 测试不存在的设备
+    # 测试不存在的设备：控制命令不检查设备存在性，
+    # 任何时候都可控制（设备 SN 由实体提供），仍应尝试发送
     result = await handler.send_command("NOTEXIST12345", "open")
-    if not result:
-        tr.ok("不存在的设备被正确拒绝")
+    if result:
+        tr.ok("控制命令对未登记设备仍尝试发送（任何时候可控制）")
     else:
-        tr.fail("不存在设备", "不存在的设备应返回False")
+        tr.fail("不存在设备控制", "控制命令应始终尝试发送")
 
 
 async def test_command_id_increment(tr: TestResult):

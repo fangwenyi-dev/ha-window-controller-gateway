@@ -423,14 +423,20 @@ class WindowControllerMQTTHandler:
                 _LOGGER.error("未知命令类型: %s", command)
                 return False
             
-            # 检查设备是否存在
-            if command not in ["bind_gateway", "start_pairing", "discover"]:
+            # 控制命令集合（开/关/停/内倒/风锁模式/设置位置）
+            control_commands = ["open", "close", "stop", "a", "set_position", "wind_lock_tilt", "wind_lock_flat"]
+
+            # 设备存在性检查：控制命令跳过——用户要求任何时候都可控制，
+            # 设备 SN 由实体提供，设备是否已被网关上报/是否在 device_manager
+            # 中都不影响发送。仅对需要在设备存在前提下执行的其他命令检查。
+            if command not in ["bind_gateway", "start_pairing", "discover"] + control_commands:
                 device = self.device_manager.get_device(device_sn)
                 if not device:
                     _LOGGER.error("设备不存在，无法发送命令: %s", device_sn)
                     return False
-            
-            is_offline_allowed_command = command in ["open", "close", "stop", "a", "set_position", "start_pairing", "wind_lock_tilt", "wind_lock_flat"]
+
+            # 控制命令与配对命令无论网关在线与否都尝试发送（MQTT QoS 1 保证送达）
+            is_offline_allowed_command = command in control_commands + ["start_pairing"]
             
             if is_offline_allowed_command:
                 _LOGGER.info("命令 %s 无论网关在线与否都尝试发送", command)
