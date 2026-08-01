@@ -125,7 +125,6 @@ GATEWAY_CHECK_INTERVAL: Final = 30
 INITIAL_RETRY_DELAY: Final = 5
 RESTART_DELAY: Final = 1
 GATEWAY_PAIRING_TIMEOUT: Final = 60
-GATEWAY_CONNECT_TIMEOUT: Final = 10      # 配置流程中等待网关首次上报的最长时间（秒）
 
 # ==================== 命令重发机制 ====================
 COMMAND_ACK_TIMEOUT: Final = 5        # 等待网关回复的超时时间（秒）

@@ -16,7 +16,7 @@ from .const import (
     CONF_GATEWAY_SN, 
     CONF_GATEWAY_NAME, 
     DEFAULT_GATEWAY_NAME,
-    GATEWAY_CONNECT_TIMEOUT
+    DEVICE_SETUP_DELAY
 )
 from .mqtt_handler import WindowControllerMQTTHandler
 
@@ -375,34 +375,19 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.error("Failed to setup MQTT handler")
                 return False
 
-            # 协议说明：002 是网关主动发起的上报，HA 发送 002 网关不会响应。
-            # 连接验证改为：只检查 MQTT 订阅是否成功（setup 返回 True 即代表订阅成功），
-            # 然后等待网关主动上报（网关在线时会主动发送 001/002 消息，
-            # handle_gateway_response 会设置 connected=True）。
-            # 不再发送无效的 002 发现命令。
-            # await mqtt_handler.check_connection()  # 旧逻辑：发送 002，网关不响应
+            # 连接验证与 v1.3.5 一致：调用 check_connection 发送标准 002 命令，
+            # publish 成功即认为 MQTT broker 可达并标记网关在线。
+            # 不再依赖"等待网关主动上报"（网关上报频率低时会导致误判失败）。
+            connected = await mqtt_handler.check_connection()
 
-            # 轮询等待网关主动上报：一旦收到立即通过，最多等待 GATEWAY_CONNECT_TIMEOUT 秒。
-            # 固定 sleep 会漏掉上报频率较低（心跳间隔长）但实际在线的网关。
-            waited = 0.0
-            poll_interval = 0.5
-            while waited < GATEWAY_CONNECT_TIMEOUT and not mqtt_handler.connected:
-                await asyncio.sleep(poll_interval)
-                waited += poll_interval
-
-            # 检查网关是否主动上报了消息（connected 由 handle_gateway_response 设置）
-            connected = mqtt_handler.connected
+            # 给网关一点响应时间（网关在线时会回复，connected 保持）
+            await asyncio.sleep(DEVICE_SETUP_DELAY)
 
             if connected:
                 _LOGGER.info("Gateway connectivity test passed")
             else:
-                # 注意：这不是错误，仅提示未在窗口内收到网关上报，
-                # async_step_user 会引导用户进入"仍然添加"确认步骤
-                _LOGGER.info(
-                    "Gateway connectivity test: no response within %.0f s "
-                    "(将提示用户确认后仍可添加)",
-                    GATEWAY_CONNECT_TIMEOUT,
-                )
+                # 注意：这不是错误，仅提示未通过，async_step_user 会引导进入"仍然添加"确认步骤
+                _LOGGER.info("Gateway connectivity test: not passed (将提示用户确认后仍可添加)")
 
             return connected
 
