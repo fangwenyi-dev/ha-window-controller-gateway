@@ -25,10 +25,19 @@
           "confirm": "确认迁移",
           "remove_old": "迁移后移除旧网关"
         }
+      },
+      "confirm_add": {
+        "title": "网关未响应",
+        "description": "在测试时间内未收到网关上报（SN: {gateway_sn}）。\n网关可能未上电、未连接 MQTT 或上报间隔较长。\n确认仍要添加吗？添加后网关上线并上报时会自动发现设备。",
+        "data": {
+          "confirm": "仍然添加"
+        }
       }
     },
     "error": {
-      "invalid_sn_format": "序列号格式无效，必须至少10位字母数字"
+      "invalid_sn_format": "序列号格式无效，必须至少10位字母数字",
+      "mqtt_not_available": "MQTT 集成未启用，请先在 Home Assistant 中启用 MQTT",
+      "cannot_connect": "连接网关失败"
     },
     "abort": {
       "already_configured": "该网关已配置",

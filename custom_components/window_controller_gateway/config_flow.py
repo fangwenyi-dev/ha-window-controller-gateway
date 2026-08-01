@@ -60,6 +60,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Configuration flow handler class"""
     VERSION = 1
 
+    def __init__(self):
+        """初始化配置流"""
+        super().__init__()
+        # 连接测试未通过时暂存用户输入，供确认步骤使用
+        self._pending_gateway_sn = None
+        self._pending_gateway_name = None
+
     async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         """Handle user step"""
         errors = {}
@@ -82,9 +89,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                 # 测试网关连接性
                 try:
-                    connected = await self._test_gateway_connectivity(gateway_sn)
-                    if not connected:
-                        errors["base"] = "cannot_connect"
+                    # MQTT 集成未启用是硬性前置条件，直接报错（不可跳过）
+                    if not self.hass.data.get("mqtt"):
+                        errors["base"] = "mqtt_not_available"
+                    else:
+                        connected = await self._test_gateway_connectivity(gateway_sn)
+                        if not connected:
+                            # 未在测试窗口内收到网关上报：不阻塞添加。
+                            # 网关可能未上电/未连 MQTT/上报间隔较长，
+                            # 进入确认步骤让用户决定是否仍然添加。
+                            self._pending_gateway_sn = gateway_sn
+                            self._pending_gateway_name = gateway_name
+                            return await self.async_step_confirm_add()
                 except Exception:
                     errors["base"] = "cannot_connect"
 
@@ -125,6 +141,44 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "example_sn": "100121501186",
                 "min_length": "10"
             }
+        )
+
+    async def async_step_confirm_add(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+        """连接测试未通过时的确认步骤：允许用户仍然添加网关
+
+        本集成无法主动探测网关（协议规定网关只能主动上报），
+        连接测试只是"在窗口内等一次上报"。网关未上电/未连 MQTT/上报间隔较长
+        都会导致测试失败，不应因此阻止用户添加。
+        """
+        if user_input is not None:
+            if user_input.get("confirm", False):
+                gateway_sn = self._pending_gateway_sn
+                gateway_name = self._pending_gateway_name
+                if not gateway_sn:
+                    return self.async_abort(reason="invalid_input")
+                # 再次检查唯一性（确认期间可能已被其他流程配置）
+                await self.async_set_unique_id(gateway_sn)
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(
+                    title=gateway_name,
+                    data={
+                        CONF_GATEWAY_SN: gateway_sn,
+                        CONF_GATEWAY_NAME: gateway_name
+                    }
+                )
+            # 用户选择返回修改：把已输入的值带回表单
+            self.context["gateway_sn"] = self._pending_gateway_sn
+            self.context["gateway_name"] = self._pending_gateway_name
+            return await self.async_step_user()
+
+        return self.async_show_form(
+            step_id="confirm_add",
+            data_schema=vol.Schema({
+                vol.Required("confirm", default=False): bool,
+            }),
+            description_placeholders={
+                "gateway_sn": self._pending_gateway_sn or "",
+            },
         )
 
     async def async_step_replace_gateway(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:

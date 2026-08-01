@@ -740,6 +740,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         previous.update(entry_data)
         hass.data[DOMAIN][entry.entry_id] = previous
 
+        # 恢复被 HA 自动禁用的实体（disabled_by="integration"）。
+        # 背景：实体注册表中同一 unique_id 的平台/配置变迁（如旧版本按钮由其他
+        # 平台创建、或升级后 domain 变化）会导致 HA 自动禁用实体，前端显示为
+        # "已禁用"灰色。用户手动禁用的（disabled_by="user"）不做处理。
+        # 必须在平台 forward 之前恢复，实体创建时即处于启用状态。
+        try:
+            entity_registry = er.async_get(hass)
+            restored_count = 0
+            for entity_entry in list(entity_registry.entities.values()):
+                if (entity_entry.platform == DOMAIN
+                        and entity_entry.config_entry_id == entry.entry_id
+                        and entity_entry.disabled_by is not None
+                        and entity_entry.disabled_by != "user"):
+                    entity_registry.async_update_entity(
+                        entity_entry.entity_id, disabled_by=None
+                    )
+                    restored_count += 1
+            if restored_count:
+                _LOGGER.info("已恢复 %d 个被自动禁用的实体", restored_count)
+        except Exception as e:
+            _LOGGER.debug("恢复自动禁用实体失败（可忽略）: %s", e)
+
         # 设置平台（快速返回，不等待实体创建完成）
         _LOGGER.debug("正在设置前端平台组件...")
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
