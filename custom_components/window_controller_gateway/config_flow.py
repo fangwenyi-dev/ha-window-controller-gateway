@@ -396,8 +396,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if connected:
                 _LOGGER.info("Gateway connectivity test passed")
             else:
-                _LOGGER.warning(
-                    "Gateway connectivity test failed (no response within %.0f s)",
+                # 注意：这不是错误，仅提示未在窗口内收到网关上报，
+                # async_step_user 会引导用户进入"仍然添加"确认步骤
+                _LOGGER.info(
+                    "Gateway connectivity test: no response within %.0f s "
+                    "(将提示用户确认后仍可添加)",
                     GATEWAY_CONNECT_TIMEOUT,
                 )
 

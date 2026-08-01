@@ -549,9 +549,12 @@ class WindowControllerMQTTHandler:
                 )
                 _LOGGER.info("发送协议命令: %s (类型: %s) 到设备: %s, 参数: %s", command, ctype, device_sn, payload["data"])
 
-                # 003/004/006/007 是 HA 主动下发的命令，需要网关回复。
+                # 004/006/007 是 HA 主动下发的命令，需要网关回复。
                 # 如果网关未回复，通过定时器触发重发。
-                if ctype in ("003", "004", "006", "007"):
+                # 003（配对/解绑）不重发，与 v1.3.5 行为一致：
+                # 配对是用户主动操作，网关处理慢或回复丢失时由用户再次点击，
+                # 自动重发可能在网关已处理但回复丢失时造成重复配对。
+                if ctype in ("004", "006", "007"):
                     self._pending_commands[sent_command_id] = {
                         "payload": payload,
                         "retry_count": 1,  # 首次发送算第 1 次
@@ -808,8 +811,9 @@ class WindowControllerMQTTHandler:
           {"head":"$SH","ctype":"003","id":<id>,"sn":"<网关SN>",
            "data":{"devtype":"<设备类型>","sn":"<设备SN>","bind":0}}
 
-        解绑的网关回复走 003（errcode=0），
-        _handle_ctype_003 收到回复后通过 _clear_pending_command 取消重发定时器。
+        解绑的网关回复走 003（errcode=0）。
+        003 不注册重发定时器（与 v1.3.5 一致），
+        _handle_ctype_003 中的 _clear_pending_command 保留以兼容残留记录。
         """
         # 获取设备实际类型，回退到 DEVICE_TYPE_CURTAIN_CTR
         device = self.device_manager.get_device(device_sn)
@@ -831,6 +835,7 @@ class WindowControllerMQTTHandler:
         self.command_id += 1
         if self.command_id > MAX_COMMAND_ID:
             self.command_id = 1
+        _LOGGER.debug("解绑命令 id=%s", sent_command_id)
         
         # 发送MQTT消息
         try:
@@ -844,18 +849,8 @@ class WindowControllerMQTTHandler:
             _LOGGER.info("解绑命令已发送，设备SN: %s", device_sn)
             _LOGGER.debug("解绑命令payload: %s", payload)
 
-            # 记录待回复命令（解绑回复走 003，_handle_ctype_003 通过 command_id 精确匹配清除）
-            self._pending_commands[sent_command_id] = {
-                "payload": payload,
-                "retry_count": 1,
-            }
-            timer = self.hass.loop.call_later(
-                COMMAND_ACK_TIMEOUT,
-                lambda cid=sent_command_id: self._schedule_async_task(
-                    self._retry_command(cid)
-                )
-            )
-            self._pending_commands[sent_command_id]["timer"] = timer
+            # 003（解绑）不注册重发，与 v1.3.5 行为一致：
+            # 解绑后设备可能立即从注册表移除，网关回复丢失时由用户再次操作。
         except Exception as e:
             _LOGGER.error("发送解绑命令失败: %s", e)
             raise
