@@ -1148,23 +1148,40 @@ class WindowControllerDeviceManager:
         # 5.4 重新创建平台实体，确保按钮实体正确显示
         if migrated_devices:
             _LOGGER.info("开始重新创建平台实体...")
-            await self._recreate_platform_entities(new_gateway_sn, migrated_devices)
+            await self._recreate_platform_entities(old_gateway_sn, new_gateway_sn, migrated_devices)
             _LOGGER.info("平台实体重新创建完成")
     
-    async def _recreate_platform_entities(self, new_gateway_sn: str, device_sns: List[str]):
-        """重新创建平台实体 - 原地更新配置条目关联，避免删除重建造成的空窗期"""
+    async def _recreate_platform_entities(self, old_gateway_sn: str, new_gateway_sn: str, device_sns: List[str]):
+        """重新创建平台实体
+
+        迁移后旧网关前缀的实体（unique_id 为 {old_gw}_{sn}_... 或
+        {old_gw}_remove_{sn}）必须删除，否则新网关 reload 后按新前缀
+        创建实体时会与旧前缀实体并存（同一设备出现两套按钮/Cover/传感器）。
+        删除后 on_device_added 回调按新前缀 unique_id 查重并创建新实体。
+        """
         from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 
         entity_registry = async_get_entity_registry(self.hass)
         device_registry = await self._get_device_registry()
 
+        # 删除旧网关前缀的实体（含删除按钮 {old_gw}_remove_{sn}），
+        # 避免迁移后旧前缀与新前缀实体并存
+        for entity_id, entity_entry in list(entity_registry.entities.items()):
+            if entity_entry.platform != DOMAIN or not entity_entry.unique_id:
+                continue
+            for device_sn in device_sns:
+                if (entity_entry.unique_id.startswith(f"{old_gateway_sn}_{device_sn}_")
+                        or entity_entry.unique_id == f"{old_gateway_sn}_remove_{device_sn}"):
+                    entity_registry.async_remove(entity_id)
+                    _LOGGER.info("迁移时删除旧前缀实体: %s", entity_id)
+                    break
+
+        # 兜底：仍在注册表中且配置条目未指向新网关的实体，更新其关联
         for platform in self.entity_recreate_platforms:
             for entity_id, entity_entry in entity_registry.entities.items():
                 if entity_entry.platform == DOMAIN and entity_entry.domain == platform:
                     for device_sn in device_sns:
-                        # 边界匹配（device_sn 前后均有下划线），
-                        # 避免 SN 前缀重叠（如 5005 vs 50051）误关联；
-                        # 迁移实体 unique_id 可能仍为旧网关前缀，因此不限定网关前缀
+                        # 边界匹配（device_sn 前后均有下划线），避免 SN 前缀重叠误关联
                         if entity_entry.unique_id and f"_{device_sn}_" in entity_entry.unique_id:
                             new_device = device_registry.async_get_device(
                                 identifiers={(DOMAIN, device_sn)}
