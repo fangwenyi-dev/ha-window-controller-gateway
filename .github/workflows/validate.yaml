@@ -10,6 +10,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Syntax check (compileall)
+        run: |
+          python -m compileall -q custom_components
+          python -m py_compile test_full_simulation.py
+
+      - name: JSON validation
+        run: |
+          python - <<'EOF'
+          import json
+          files = [
+              "custom_components/window_controller_gateway/manifest.json",
+              "custom_components/window_controller_gateway/strings.json",
+              "custom_components/window_controller_gateway/translations/zh-CN.json",
+              "hacs.json",
+          ]
+          for f in files:
+              json.load(open(f, encoding="utf-8"))
+              print(f"OK {f}")
+          EOF
+
+      - name: Run simulation tests
+        run: python test_full_simulation.py
+
       - name: HACS validation
         uses: hacs/action@main
         with:

@@ -237,6 +237,7 @@ data:
 - 功能调整: 设备迁移（migrate_devices 服务与替换网关自动迁移）暂禁用（服务注册与自动触发已注释，发现流程不再强制进入替换流程，可正常添加多网关）
 - 修复: `set_position` 服务 schema 不再用 `positive_int`（位置 0 即完全关闭会被错误拒绝）
 - 修复: MQTT 重连任务去重（同一实例不再并发重连，cleanup 可取消）；`transfer_device` 保留实体自定义名称/别名；删除网关时清理子设备孤儿注册表条目
+- 工程: CI 接入 Python 语法检查（compileall）+ JSON 校验 + 模拟测试（test_full_simulation.py），防止语法/格式错误进入 main
 - 修复: P0 — `mqtt_handler.py` 006/007 缩进损坏（IndentationError）导致集成无法加载
 - 修复: `check_connection` 不再向网关 req 主题发布空 payload；网关在线状态由收到上报/心跳维护，离线超时 30 分钟（网关约 5 分钟心跳一次）
 - 修复: 迁移回滚只回滚快照中的设备，不再误伤新网关已有设备
