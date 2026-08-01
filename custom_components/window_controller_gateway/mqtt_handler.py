@@ -565,12 +565,12 @@ class WindowControllerMQTTHandler:
                 )
                 _LOGGER.info("发送协议命令: %s (类型: %s) 到设备: %s, 参数: %s", command, ctype, device_sn, payload["data"])
 
-                # 004/006/007 是 HA 主动下发的命令，需要网关回复。
+                # 006/007 是 HA 主动下发的命令，需要网关回复。
                 # 如果网关未回复，通过定时器触发重发（最多重发一次）。
-                # 003（配对 bind=1）不重发：配对是用户主动操作，网关处理慢或
-                # 回复丢失时由用户再次点击，避免重复配对；
-                # 003（解绑 bind=0）的重发由 unbind_device 单独注册（保留重发）。
-                if ctype in ("004", "006", "007"):
+                # 003/004 不重发：003 配对/解绑与 004 控制命令都是用户主动操作，
+                # 网关已处理但回复丢失时自动重发会造成重复配对/重复控制，
+                # 由用户再次点击即可。
+                if ctype in ("006", "007"):
                     self._pending_commands[sent_command_id] = {
                         "payload": payload,
                         "retry_count": 1,  # 首次发送算第 1 次
@@ -846,10 +846,11 @@ class WindowControllerMQTTHandler:
             "sn": self.gateway_sn
         }
         sent_command_id = self.command_id
-        # 递增ID
+        # 递增ID（命令 id 仍随消息发送，仅不再注册重发）
         self.command_id += 1
         if self.command_id > MAX_COMMAND_ID:
             self.command_id = 1
+        _LOGGER.debug("解绑命令 id=%s", sent_command_id)
         
         # 发送MQTT消息
         try:
@@ -863,18 +864,8 @@ class WindowControllerMQTTHandler:
             _LOGGER.info("解绑命令已发送，设备SN: %s", device_sn)
             _LOGGER.debug("解绑命令payload: %s", payload)
 
-            # 记录待回复命令（解绑回复走 003，_handle_ctype_003 通过 command_id 精确匹配清除）
-            self._pending_commands[sent_command_id] = {
-                "payload": payload,
-                "retry_count": 1,
-            }
-            timer = self.hass.loop.call_later(
-                COMMAND_ACK_TIMEOUT,
-                lambda cid=sent_command_id: self._schedule_async_task(
-                    self._retry_command(cid)
-                )
-            )
-            self._pending_commands[sent_command_id]["timer"] = timer
+            # 003（解绑）不注册重发：解绑后设备可能立即从注册表移除，
+            # 自动重发可能在设备已删除后仍向网关发送命令，由用户再次操作。
         except Exception as e:
             _LOGGER.error("发送解绑命令失败: %s", e)
             raise
