@@ -48,7 +48,7 @@ GLOBAL_MANUALLY_REMOVED_DEVICES: Final = "global_manually_removed_devices"
 # ==================== MQTT 相关 ====================
 DEFAULT_COMMAND_ID: Final = 1
 MAX_COMMAND_ID: Final = 999999
-GATEWAY_TIMEOUT_SECONDS: Final = 1800
+GATEWAY_TIMEOUT_SECONDS: Final = 900   # 网关15分钟无上报即判定离线（网关约5分钟心跳上报一次）
 TOPIC_GATEWAY_REQ_FORMAT: Final = "gateway/{gateway_sn}/req"
 TOPIC_GATEWAY_RSP: Final = "gateway/rpt_rsp"
 MQTT_MAX_RETRIES: Final = 5
