@@ -46,8 +46,6 @@ from .const import (
     TOPIC_GATEWAY_REQ_FORMAT,
     TOPIC_GATEWAY_RSP,
     DEVICE_TO_GATEWAY_MAPPING,
-    COMMAND_ACK_TIMEOUT,
-    COMMAND_MAX_RETRIES,
     get_device_display_name,
 )
 
@@ -83,10 +81,6 @@ class WindowControllerMQTTHandler:
         # 消息去重 - 记录最近处理的消息ID，避免重复处理
         self._processed_messages = {}  # {message_id: timestamp}
         self._message_dedup_duration = 5  # 5秒内相同ID的消息认为是重复
-
-        # 命令重发机制 - 跟踪已发送但未收到回复的 003/004 命令
-        # {command_id: {"payload": dict, "retry_count": int, "timer": asyncio.TimerHandle}}
-        self._pending_commands = {}
     
     def _schedule_async_task(self, coro):
         """安全地将异步任务调度到主事件循环
@@ -546,9 +540,6 @@ class WindowControllerMQTTHandler:
             # 打印详细的命令信息
             _LOGGER.debug("发送命令到网关: %s, 命令: %s, 设备SN: %s, 载荷: %s", 
                           self.TOPIC_GATEWAY_REQ, command, device_sn, payload)
-            
-            # 记录当前命令ID（payload 中使用的 id）
-            sent_command_id = payload["id"]
 
             # 递增ID，保持在合理范围内
             self.command_id += 1
@@ -565,26 +556,9 @@ class WindowControllerMQTTHandler:
                 )
                 _LOGGER.info("发送协议命令: %s (类型: %s) 到设备: %s, 参数: %s", command, ctype, device_sn, payload["data"])
 
-                # 006/007 是 HA 主动下发的命令，需要网关回复。
-                # 如果网关未回复，通过定时器触发重发（最多重发一次）。
-                # 003/004 不重发：003 配对/解绑与 004 控制命令都是用户主动操作，
-                # 网关已处理但回复丢失时自动重发会造成重复配对/重复控制，
-                # 由用户再次点击即可。
-                if ctype in ("006", "007"):
-                    self._pending_commands[sent_command_id] = {
-                        "payload": payload,
-                        "retry_count": 1,  # 首次发送算第 1 次
-                    }
-                    # 启动重发定时器
-                    timer = self.hass.loop.call_later(
-                        COMMAND_ACK_TIMEOUT,
-                        lambda cid=sent_command_id: self._schedule_async_task(
-                            self._retry_command(cid)
-                        )
-                    )
-                    self._pending_commands[sent_command_id]["timer"] = timer
-                    _LOGGER.debug("命令 id=%s 已记录，等待网关回复（超时 %ss 后重发）", sent_command_id, COMMAND_ACK_TIMEOUT)
-
+                # 不启用命令重发：MQTT QoS 1 保证消息送达 broker，网关在线即可收到。
+                # 网关已执行但回复丢失时自动重发会造成重复配对/重复控制，
+                # 命令均由用户主动触发，未生效时用户再次操作即可。
                 return True
             except Exception as publish_error:
                 _LOGGER.error("MQTT消息发布失败: %s\n命令: %s\n设备: %s\n主题: %s\n载荷: %s", 
@@ -827,8 +801,7 @@ class WindowControllerMQTTHandler:
           {"head":"$SH","ctype":"003","id":<id>,"sn":"<网关SN>",
            "data":{"devtype":"<设备类型>","sn":"<设备SN>","bind":0}}
 
-        解绑的网关回复走 003（errcode=0），
-        _handle_ctype_003 收到回复后通过 _clear_pending_command 取消重发定时器。
+        解绑的网关回复走 003（errcode=0）。
         """
         # 获取设备实际类型，回退到 DEVICE_TYPE_CURTAIN_CTR
         device = self.device_manager.get_device(device_sn)
@@ -899,16 +872,6 @@ class WindowControllerMQTTHandler:
                 _LOGGER.debug("取消配对超时句柄异常: %s", e)
         self.pairing_timeout_handle = None
 
-        # 取消所有待回复命令的重发定时器
-        for command_id, pending in list(self._pending_commands.items()):
-            timer = pending.get("timer")
-            if timer:
-                try:
-                    timer.cancel()
-                except Exception:
-                    pass
-        self._pending_commands.clear()
-
         # 取消后台任务
         if self._check_task:
             self._check_task.cancel()
@@ -966,63 +929,6 @@ class WindowControllerMQTTHandler:
                 return
             self._processed_messages[msg_key] = current_time
         await handler_coro
-
-    def _clear_pending_command(self, command_id: int):
-        """收到网关回复后，取消对应命令的重发定时器并清理记录"""
-        pending = self._pending_commands.pop(command_id, None)
-        if pending:
-            timer = pending.get("timer")
-            if timer:
-                try:
-                    timer.cancel()
-                except Exception:
-                    pass
-            _LOGGER.debug("命令 id=%s 已收到网关回复，取消重发定时器", command_id)
-
-    async def _retry_command(self, command_id: int):
-        """命令超时未收到回复时的重发逻辑"""
-        pending = self._pending_commands.get(command_id)
-        if not pending:
-            return  # 已收到回复，无需重发
-
-        retry_count = pending["retry_count"]
-        payload = pending["payload"]
-
-        if retry_count >= COMMAND_MAX_RETRIES:
-            # 达到最大发送次数（首发+重发），放弃
-            self._pending_commands.pop(command_id, None)
-            ctype = payload.get("ctype", "")
-            _LOGGER.warning(
-                "命令 id=%s (类型: %s) 发送 %d 次后仍未收到网关回复，放弃",
-                command_id, ctype, COMMAND_MAX_RETRIES
-            )
-            return
-
-        # 重发命令
-        try:
-            await mqtt.async_publish(
-                self.hass,
-                self.TOPIC_GATEWAY_REQ,
-                json.dumps(payload),
-                1,
-                False
-            )
-            pending["retry_count"] = retry_count + 1
-            _LOGGER.info(
-                "命令 id=%s (类型: %s) 重发第 %d 次（最多重发 %d 次）",
-                command_id, payload.get("ctype", ""), retry_count, COMMAND_MAX_RETRIES - 1
-            )
-            # 重新启动定时器等待下一次重发
-            timer = self.hass.loop.call_later(
-                COMMAND_ACK_TIMEOUT,
-                lambda cid=command_id: self._schedule_async_task(
-                    self._retry_command(cid)
-                )
-            )
-            pending["timer"] = timer
-        except Exception as e:
-            self._pending_commands.pop(command_id, None)
-            _LOGGER.error("命令 id=%s 重发失败: %s", command_id, e)
 
     async def _send_ack(self, ctype: str, payload: dict):
         """发送确认响应到网关（用于网关主动发起的消息）
@@ -1238,8 +1144,7 @@ class WindowControllerMQTTHandler:
         收到 003 回复后，errcode=0 且包含 sn 字段时添加设备（配对成功）。
         解绑回复不包含 sn 字段，不会误触发添加逻辑。
         """
-        # 收到网关回复，取消重发定时器
-        self._clear_pending_command(payload.get("id", 0))
+        # 收到网关回复（命令不启用重发机制）
 
         errcode = data.get("errcode", -1)
         device_sn = data.get("sn") or payload.get("sn")
@@ -1274,8 +1179,7 @@ class WindowControllerMQTTHandler:
         004 是 HA 主动下发的命令，网关回复 errcode:0 表示已收到。
         HA 不需要回复确认，否则会被网关误认为是新命令导致循环。
         """
-        # 收到网关回复，取消重发定时器
-        self._clear_pending_command(payload.get("id", 0))
+        # 收到网关回复（命令不启用重发机制）
 
         errcode = data.get("errcode", -1)
         device_sn = data.get("sn")
@@ -1364,8 +1268,7 @@ class WindowControllerMQTTHandler:
         006 是 HA 主动下发的命令，网关回复 errcode:0 表示已收到。
         HA 不需要回复确认，收到回复后取消重发定时器。
         """
-        # 收到网关回复，取消重发定时器
-        self._clear_pending_command(payload.get("id", 0))
+        # 收到网关回复（命令不启用重发机制）
 
         errcode = data.get("errcode", -1)
         if errcode == 0:
@@ -1379,8 +1282,7 @@ class WindowControllerMQTTHandler:
         007 是 HA 主动下发的命令，网关回复 errcode:0 表示已收到。
         HA 不需要回复确认，收到回复后取消重发定时器。
         """
-        # 收到网关回复，取消重发定时器
-        self._clear_pending_command(payload.get("id", 0))
+        # 收到网关回复（命令不启用重发机制）
 
         errcode = data.get("errcode", -1)
         if errcode == 0:
