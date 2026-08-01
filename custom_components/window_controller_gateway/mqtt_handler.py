@@ -144,32 +144,35 @@ class WindowControllerMQTTHandler:
         return True
     
     async def _check_gateway_timeout(self):
-        """检查网关是否超时未上报（与 v1.3.5 行为一致）
-
-        仅在有上报记录时检查超时；网关在线状态由 check_connection
-        （publish 成功标记在线）与收到上报共同维护。
-        """
+        """检查网关是否超时未上报"""
         try:
             while True:
                 await asyncio.sleep(GATEWAY_CHECK_INTERVAL)  # 每30秒检查一次
                 try:
+                    should_go_offline = False
+                    reason = ""
+
                     if self.last_gateway_report_time:
+                        # 有上报记录：检查是否超时
                         time_diff = datetime.now() - self.last_gateway_report_time
                         if time_diff.total_seconds() > GATEWAY_TIMEOUT_SECONDS:
-                            if self.connected:
-                                self.connected = False
-                                self._notify_status_change()
-                                _LOGGER.warning("网关 %s 超过%s秒未上报，标记为离线", self.gateway_sn, GATEWAY_TIMEOUT_SECONDS)
-                                self._schedule_async_task(
-                                    self.device_manager.update_gateway_status("offline")
-                                )
+                            should_go_offline = True
+                            reason = f"超过{GATEWAY_TIMEOUT_SECONDS}秒未上报"
+                    else:
+                        # 从未收到网关上报：如果当前标记为在线，属于误判
+                        if self.connected:
+                            should_go_offline = True
+                            reason = "从未收到网关上报消息"
+
+                    if should_go_offline and self.connected:
+                        self.connected = False
+                        self._notify_status_change()
+                        _LOGGER.warning("网关 %s %s，标记为离线", self.gateway_sn, reason)
+                        self._schedule_async_task(
+                            self.device_manager.update_gateway_status("offline")
+                        )
                 except Exception as e:
                     _LOGGER.error("检查网关超时出错: %s", e)
-        except asyncio.CancelledError:
-            _LOGGER.info("网关超时检查任务已取消")
-            return
-        except Exception as e:
-            _LOGGER.error("网关超时检查任务异常: %s", e)
         except asyncio.CancelledError:
             _LOGGER.info("网关超时检查任务已取消")
             return
@@ -757,48 +760,49 @@ class WindowControllerMQTTHandler:
                 _LOGGER.debug("清理设备 %s 的回调条目", device_sn)
     
     async def check_connection(self):
-        """检查 MQTT 连接状态（与 v1.3.5 行为一致）
+        """检查网关连接状态（不再向网关发布任何消息）
 
-        发送标准 $SH 协议的 002 命令验证 MQTT broker 连通性。
-        publish 成功即认为连接正常并标记网关在线（与原始行为一致），
-        网关离线检测由 _check_gateway_timeout 超时机制负责。
+        历史问题：旧实现向 `gateway/{sn}/req` 主题发布空 payload 来探测 broker
+        可达性。网关固件订阅该主题并尝试解析 JSON，收到空消息会解析失败，
+        属于给固件发送垃圾流量，且 publish 成功只代表 broker 可达、不代表网关在线。
+
+        现在的实现：
+        - 网关在线状态由 handle_gateway_response 收到网关上报时设置；
+        - 网关离线由 _check_gateway_timeout 超时巡检（GATEWAY_TIMEOUT_SECONDS）负责；
+        - 这里仅做轻量判断：MQTT 集成未加载或 broker 断开时，网关必然无法通信，
+          此时标记离线；否则返回当前网关在线状态。
         """
         try:
-            # 使用标准 $SH 协议格式发送发现命令
-            payload = {
-                "head": PROTOCOL_HEAD,
-                "ctype": "002",
-                "id": self.command_id,
-                "data": {},
-                "sn": self.gateway_sn
-            }
+            # MQTT 集成未加载：网关必然无法通信
+            if not self.hass.data.get("mqtt"):
+                _LOGGER.error("MQTT集成未启用，网关无法通信")
+                if self.connected:
+                    self.connected = False
+                    self._notify_status_change()
+                    self._schedule_async_task(
+                        self.device_manager.update_gateway_status("offline")
+                    )
+                return False
 
-            # 递增命令ID
-            self.command_id += 1
-            if self.command_id > MAX_COMMAND_ID:
-                self.command_id = 1
+            # broker 未连接：网关必然离线（兼容旧版 HA 无此 API 的情况）
+            try:
+                from homeassistant.components.mqtt import async_connected
+                if not async_connected(self.hass):
+                    _LOGGER.debug("MQTT broker 未连接，网关标记为离线")
+                    if self.connected:
+                        self.connected = False
+                        self._notify_status_change()
+                        self._schedule_async_task(
+                            self.device_manager.update_gateway_status("offline")
+                        )
+                    return False
+            except (ImportError, AttributeError):
+                pass  # 旧版 HA 无 async_connected API，回退为仅返回当前状态
 
-            await mqtt.async_publish(
-                self.hass,
-                self.TOPIC_GATEWAY_REQ,
-                json.dumps(payload),
-                1,
-                False
-            )
-
-            # publish 成功即认为 MQTT broker 可达，标记为在线
-            if not self.connected:
-                self.connected = True
-                _LOGGER.debug("MQTT连接状态正常")
-                self._notify_status_change()
-
-                self._schedule_async_task(
-                    self.device_manager.update_gateway_status("online")
-                )
+            return self.connected
         except Exception as e:
-            _LOGGER.error("MQTT连接检查失败: %s", e)
-
-        return self.connected
+            _LOGGER.error("检查连接状态失败: %s", e)
+            return self.connected
     
     async def unbind_device(self, device_sn: str):
         """解绑设备 - 使用协议类型003，bind=0
@@ -1210,55 +1214,44 @@ class WindowControllerMQTTHandler:
             self._notify_device_status_change(device_sn)
 
     async def _handle_ctype_003(self, payload, ctype, data):
-        """处理协议类型003：绑定/解绑子设备响应（与 v1.3.5 行为一致）
+        """处理协议类型003：绑定子设备
 
-        003 是 HA 主动下发的命令（bind=1 配对 / bind=0 解绑），
-        网关回复 errcode:0 表示已收到。HA 不需要回复确认。
+        协议流程：
+        - 添加设备：HA 发 003(bind=1) → 网关回复 003(errcode=0, sn=设备SN)
+        - 解绑设备：HA 发 003(bind=0) → 网关回复 003(errcode=0)
 
-        通过 bind 字段（或设备是否已存在）区分绑定/解绑：
-        - 解绑回复（bind=0，或未回传 bind 但设备已存在）不添加设备，
-          避免把已删除的设备重新添加；
-        - 绑定回复（bind=1，或设备不存在）才添加设备。
+        收到 003 回复后，errcode=0 且包含 sn 字段时添加设备（配对成功）。
+        解绑回复不包含 sn 字段，不会误触发添加逻辑。
         """
-        # 收到网关回复，取消重发定时器（003 不注册重发，此处兼容残留记录）
+        # 收到网关回复，取消重发定时器
         self._clear_pending_command(payload.get("id", 0))
 
         errcode = data.get("errcode", -1)
         device_sn = data.get("sn") or payload.get("sn")
-        bind_value = data.get("bind", None)
 
         if errcode == 0 and device_sn:
-            # 判断是绑定还是解绑：优先看响应中的 bind 字段；
-            # 如果网关未回传 bind，则通过设备是否已存在来推断
-            existing_device = self.device_manager.get_device(device_sn)
-            is_unbind = bind_value == 0 or (bind_value is None and existing_device)
-
-            if is_unbind:
-                # 解绑成功，不需要在 HA 侧重复删除（gateway.py 已处理）
-                _LOGGER.info("设备解绑成功: %s", device_sn)
-            else:
-                # 绑定成功，添加设备
-                device_count = len(self.device_manager.get_all_devices())
-                device_number = device_count + 1
-                device_name = get_device_display_name(self.gateway_sn, device_sn, device_number)
-                # 手动配对时使用 is_manual_pairing=True，跳过手动删除列表检查
-                await self.device_manager.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER, is_manual_pairing=True)
-                # 配对成功后立即退出配对模式，UI 可以立刻从"配对中"恢复
-                # 同时取消配对超时定时器，避免超时回调冗余触发
-                if self.pairing_timeout_handle:
-                    self.pairing_timeout_handle.cancel()
-                    self.pairing_timeout_handle = None
-                self.pairing_active = False
-                self._notify_status_change()
-                _LOGGER.info("设备绑定成功: %s, 名称: %s", device_sn, device_name)
+            # 绑定成功，添加设备
+            device_count = len(self.device_manager.get_all_devices())
+            device_number = device_count + 1
+            device_name = get_device_display_name(self.gateway_sn, device_sn, device_number)
+            # 手动配对时使用 is_manual_pairing=True，跳过手动删除列表检查
+            await self.device_manager.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER, is_manual_pairing=True)
+            # 配对成功后立即退出配对模式，UI 可以立刻从"配对中"恢复
+            # 同时取消配对超时定时器，避免超时回调冗余触发
+            if self.pairing_timeout_handle:
+                self.pairing_timeout_handle.cancel()
+                self.pairing_timeout_handle = None
+            self.pairing_active = False
+            self._notify_status_change()
+            _LOGGER.info("设备绑定成功: %s, 名称: %s", device_sn, device_name)
         elif errcode == 0 and not device_sn:
-            _LOGGER.warning("设备操作成功但未返回设备SN: %s", payload)
+            _LOGGER.warning("设备绑定成功但未返回设备SN，无法添加设备: %s", payload)
         else:
             # 错误码7可能表示通讯距离不够，不记录为错误
             if errcode == 7:
-                _LOGGER.debug("设备操作失败，错误码: %d, SN: %s (可能是通讯距离不够)", errcode, device_sn)
+                _LOGGER.debug("设备绑定失败，错误码: %d, SN: %s (可能是通讯距离不够)", errcode, device_sn)
             else:
-                _LOGGER.warning("设备操作失败，错误码: %d, SN: %s", errcode, device_sn)
+                _LOGGER.warning("设备绑定失败，错误码: %d, SN: %s", errcode, device_sn)
 
     async def _handle_ctype_004(self, payload, ctype, data):
         """处理协议类型004：设备控制响应
