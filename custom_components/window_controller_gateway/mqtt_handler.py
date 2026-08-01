@@ -549,9 +549,12 @@ class WindowControllerMQTTHandler:
                 )
                 _LOGGER.info("发送协议命令: %s (类型: %s) 到设备: %s, 参数: %s", command, ctype, device_sn, payload["data"])
 
-                # 003/004/006/007 是 HA 主动下发的命令，需要网关回复。
-                # 如果网关未回复，通过定时器触发重发。
-                if ctype in ("003", "004", "006", "007"):
+                # 004/006/007 是 HA 主动下发的命令，需要网关回复。
+                # 如果网关未回复，通过定时器触发重发（最多重发一次）。
+                # 003（配对 bind=1）不重发：配对是用户主动操作，网关处理慢或
+                # 回复丢失时由用户再次点击，避免重复配对；
+                # 003（解绑 bind=0）的重发由 unbind_device 单独注册（保留重发）。
+                if ctype in ("004", "006", "007"):
                     self._pending_commands[sent_command_id] = {
                         "payload": payload,
                         "retry_count": 1,  # 首次发送算第 1 次
