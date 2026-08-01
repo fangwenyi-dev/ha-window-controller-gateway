@@ -575,7 +575,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             handle_set_position,
             schema=vol.Schema({
                 vol.Required("device_id"): cv.string,
-                vol.Required("position"): vol.All(cv.positive_int, vol.Range(min=POSITION_MIN, max=POSITION_MAX)),
+                vol.Required("position"): vol.All(vol.Coerce(int), vol.Range(min=POSITION_MIN, max=POSITION_MAX)),
             })
         )
 
@@ -588,16 +588,19 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             })
         )
 
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_MIGRATE_DEVICES,
-            handle_migrate_devices,
-            schema=vol.Schema({
-                vol.Required("old_gateway_sn"): cv.string,
-                vol.Required("new_gateway_sn"): cv.string,
-                vol.Optional("remove_old_gateway", default=False): cv.boolean,
-            })
-        )
+        # ============ 迁移服务（migrate_devices）暂禁用 ============
+        # 设备迁移功能先不使用：协议/迁移逻辑待后续版本完善后再启用。
+        # 若需重新启用，取消下面 async_register 的注释即可。
+        # hass.services.async_register(
+        #     DOMAIN,
+        #     SERVICE_MIGRATE_DEVICES,
+        #     handle_migrate_devices,
+        #     schema=vol.Schema({
+        #         vol.Required("old_gateway_sn"): cv.string,
+        #         vol.Required("new_gateway_sn"): cv.string,
+        #         vol.Optional("remove_old_gateway", default=False): cv.boolean,
+        #     })
+        # )
 
         hass.services.async_register(
             DOMAIN,
@@ -776,20 +779,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # 创建后台任务，延迟触发发现
         hass.async_create_task(_background_initialization(mqtt_handler), eager_start=True)
 
-        # 检查是否需要执行设备迁移（替换网关流程）
-        _LOGGER.info("检查是否需要执行设备迁移，entry.data: %s", entry.data)
-        migration_info = entry.data.get("migration_info")
-        _LOGGER.info("迁移信息: %s", migration_info)
-        if migration_info:
-            old_gateway_sn = migration_info.get("old_gateway_sn")
-            remove_old_gateway = migration_info.get("remove_old_gateway", False)
-            _LOGGER.info("准备迁移设备，旧网关: %s, 新网关: %s, 是否移除旧网关: %s", old_gateway_sn, gateway_sn, remove_old_gateway)
-            if old_gateway_sn and old_gateway_sn.lower() != gateway_sn.lower():
-                hass.async_create_task(_migrate_devices_async(hass, old_gateway_sn, gateway_sn, remove_old_gateway), name=f"{DOMAIN}_migrate_{entry.entry_id}")
-                # migration_info 的清除移至 _migrate_devices_async 内执行：
-                # 这里立即 async_update_entry 会触发 add_update_listener -> async_reload，
-                # 与迁移任务（1 秒延迟）并发产生竞态（reload 清理 manager 时迁移服务可能调用失败）。
-                # 任务内清除 + await reload 完成后再执行迁移，避免竞态。
+        # ============ 自动设备迁移（替换网关流程）暂禁用 ============
+        # 迁移功能先不使用：即使 entry.data 中带 migration_info（替换网关流程
+        # 创建的 entry），也不再自动触发设备迁移。重新启用时取消下面注释。
+        # _LOGGER.info("检查是否需要执行设备迁移，entry.data: %s", entry.data)
+        # migration_info = entry.data.get("migration_info")
+        # if migration_info:
+        #     old_gateway_sn = migration_info.get("old_gateway_sn")
+        #     remove_old_gateway = migration_info.get("remove_old_gateway", False)
+        #     if old_gateway_sn and old_gateway_sn.lower() != gateway_sn.lower():
+        #         hass.async_create_task(_migrate_devices_async(hass, old_gateway_sn, gateway_sn, remove_old_gateway), name=f"{DOMAIN}_migrate_{entry.entry_id}")
 
         _LOGGER.info("开窗器网关 [%s] 设置完成", gateway_name)
         return True

@@ -82,7 +82,7 @@
     },
     "migrate_devices": {
       "name": "迁移设备",
-      "description": "将子设备从旧网关迁移到新网关"
+      "description": "将子设备从旧网关迁移到新网关（该服务当前暂不可用）"
     },
     "transfer_device": {
       "name": "转移设备",

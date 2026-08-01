@@ -227,10 +227,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         
         # 检查是否已存在配置的网关
         existing_entries = self.hass.config_entries.async_entries(DOMAIN)
-        
-        if replace_mode or existing_entries:
-            # 替换模式或已存在配置的网关，进入替换流程
-            _LOGGER.info("检测到替换模式或已配置的网关，进入替换流程")
+
+        # 迁移/替换功能暂禁用：即使已配置网关也不再强制进入替换流程，
+        # 新发现的网关直接走正常添加流程（支持多网关并存）
+        if replace_mode:
+            # 替换模式（当前无流程设置该标志，保留分支结构备用）
+            _LOGGER.info("检测到替换模式，进入替换流程")
             
             # 获取第一个已配置的网关信息或使用current_gateway_sn
             existing_gateway_sn = current_gateway_sn
