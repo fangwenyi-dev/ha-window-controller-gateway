@@ -43,7 +43,6 @@ DEVICE_TYPE_WINDOW_OPENER: Final = "window_opener"
 DEVICE_TYPE_GATEWAY: Final = "gateway"
 MAX_DEVICES_PER_GATEWAY: Final = 32
 DEVICE_TO_GATEWAY_MAPPING: Final = "device_to_gateway_mapping"
-DEVICE_TO_GATEWAY_MAPPING_FILE: Final = "device_gateway_mapping.json"
 GLOBAL_MANUALLY_REMOVED_DEVICES: Final = "global_manually_removed_devices"
 
 # ==================== MQTT 相关 ====================
@@ -56,7 +55,6 @@ MQTT_MAX_RETRIES: Final = 5
 MQTT_MIN_JITTER: Final = 0.5
 MQTT_MAX_JITTER: Final = 1.5
 MQTT_RETRY_DELAY_MAX: Final = 60
-MQTT_BATCH_SIZE: Final = 20
 PROTOCOL_HEAD: Final = "$SH"
 DEVICE_TYPE_CURTAIN_CTR: Final = "curtain_ctr"
 PAIRING_SN_PLACEHOLDER: Final = "FFFFFFFFFFFF"
@@ -84,6 +82,13 @@ GATEWAY_STATUS_OFFLINE: Final = "offline"
 GATEWAY_STATUS_PAIRING: Final = "pairing"
 PAIRING_STATUS_ACTIVE: Final = "active"
 PAIRING_STATUS_INACTIVE: Final = "inactive"
+
+# 子设备状态词汇（统一使用，避免各模块混用 online/offline/connected 等）
+DEVICE_STATUS_UNKNOWN: Final = "unknown"        # 未收到任何上报
+DEVICE_STATUS_CONNECTED: Final = "connected"    # 已关联/在线
+DEVICE_STATUS_OPEN: Final = "open"              # 窗户打开（由 r_travel 推导）
+DEVICE_STATUS_CLOSED: Final = "closed"          # 窗户关闭（由 r_travel 推导）
+DEVICE_STATUS_ERROR: Final = "error"            # 更新状态时发生异常
 
 # ==================== 错误代码相关 ====================
 ERROR_CODE_SUCCESS: Final = 0
@@ -115,14 +120,12 @@ ENTITY_ONLINE_SENSOR_SUFFIX: Final = "_online"
 
 # ==================== 时间相关（秒） ====================
 SCAN_INTERVAL: Final = 300
-SENSOR_SCAN_INTERVAL: Final = 10
-DEVICE_REGISTRATION_DELAY: Final = 0.5
 GATEWAY_READY_DELAY: Final = 1
-DEVICE_SETUP_DELAY: Final = 2
 GATEWAY_CHECK_INTERVAL: Final = 30
 INITIAL_RETRY_DELAY: Final = 5
 RESTART_DELAY: Final = 1
 GATEWAY_PAIRING_TIMEOUT: Final = 60
+GATEWAY_CONNECT_TIMEOUT: Final = 10      # 配置流程中等待网关首次上报的最长时间（秒）
 
 # ==================== 命令重发机制 ====================
 COMMAND_ACK_TIMEOUT: Final = 5        # 等待网关回复的超时时间（秒）

@@ -27,11 +27,12 @@ from .const import (
     MQTT_MIN_JITTER,
     MQTT_MAX_JITTER,
     MQTT_RETRY_DELAY_MAX,
-    MQTT_BATCH_SIZE,
     MAX_COMMAND_ID,
     PROTOCOL_HEAD,
     DEVICE_TYPE_CURTAIN_CTR,
     PAIRING_SN_PLACEHOLDER,
+    DEVICE_STATUS_OPEN,
+    DEVICE_STATUS_CLOSED,
     COMMAND_VALUE_OPEN,
     COMMAND_VALUE_CLOSE,
     COMMAND_VALUE_STOP,
@@ -254,10 +255,10 @@ class WindowControllerMQTTHandler:
                         "002": self._handle_ctype_002,
                         "003": self._handle_ctype_003,
                         "004": self._handle_ctype_004,
-"005": self._handle_ctype_005,
-"006": self._handle_ctype_006,
-"007": self._handle_ctype_007
-}
+                        "005": self._handle_ctype_005,
+                        "006": self._handle_ctype_006,
+                        "007": self._handle_ctype_007
+                    }
                     
                     if ctype in ctype_handlers:
                         self._schedule_async_task(
@@ -756,38 +757,49 @@ class WindowControllerMQTTHandler:
                 _LOGGER.debug("清理设备 %s 的回调条目", device_sn)
     
     async def check_connection(self):
-        """检查 MQTT broker 连通性（不发 002）
+        """检查网关连接状态（不再向网关发布任何消息）
 
-        协议说明：002 是网关主动发起的上报，HA 发送 002 网关不会响应。
-        此方法仅检查 MQTT broker 是否可达：通过发布一条空消息到网关 req 主题
-        来测试 MQTT 连通性。publish 成功代表 broker 可达，不代表网关设备在线。
-        网关在线状态由 handle_gateway_response 收到网关消息时设置，
-        网关离线检测由 _check_gateway_timeout 超时机制负责。
+        历史问题：旧实现向 `gateway/{sn}/req` 主题发布空 payload 来探测 broker
+        可达性。网关固件订阅该主题并尝试解析 JSON，收到空消息会解析失败，
+        属于给固件发送垃圾流量，且 publish 成功只代表 broker 可达、不代表网关在线。
+
+        现在的实现：
+        - 网关在线状态由 handle_gateway_response 收到网关上报时设置；
+        - 网关离线由 _check_gateway_timeout 超时巡检（GATEWAY_TIMEOUT_SECONDS）负责；
+        - 这里仅做轻量判断：MQTT 集成未加载或 broker 断开时，网关必然无法通信，
+          此时标记离线；否则返回当前网关在线状态。
         """
         try:
-            # 仅检查 MQTT broker 连通性：发布空消息到 req 主题
-            # 不使用 002 命令，因为网关不响应 HA 发送的 002
-            await mqtt.async_publish(
-                self.hass,
-                self.TOPIC_GATEWAY_REQ,
-                "",
-                1,
-                False
-            )
-            _LOGGER.debug("MQTT broker 连通性检查通过（broker 可达）")
+            # MQTT 集成未加载：网关必然无法通信
+            if not self.hass.data.get("mqtt"):
+                _LOGGER.error("MQTT集成未启用，网关无法通信")
+                if self.connected:
+                    self.connected = False
+                    self._notify_status_change()
+                    self._schedule_async_task(
+                        self.device_manager.update_gateway_status("offline")
+                    )
+                return False
+
+            # broker 未连接：网关必然离线（兼容旧版 HA 无此 API 的情况）
+            try:
+                from homeassistant.components.mqtt import async_connected
+                if not async_connected(self.hass):
+                    _LOGGER.debug("MQTT broker 未连接，网关标记为离线")
+                    if self.connected:
+                        self.connected = False
+                        self._notify_status_change()
+                        self._schedule_async_task(
+                            self.device_manager.update_gateway_status("offline")
+                        )
+                    return False
+            except (ImportError, AttributeError):
+                pass  # 旧版 HA 无 async_connected API，回退为仅返回当前状态
+
+            return self.connected
         except Exception as e:
-            _LOGGER.error("MQTT broker 连通性检查失败: %s", e)
-
-            # MQTT broker 不可达时，网关必定无法通信
-            if self.connected:
-                self.connected = False
-                self._notify_status_change()
-
-                self._schedule_async_task(
-                    self.device_manager.update_gateway_status("offline")
-                )
-
-        return self.connected
+            _LOGGER.error("检查连接状态失败: %s", e)
+            return self.connected
     
     async def unbind_device(self, device_sn: str):
         """解绑设备 - 使用协议类型003，bind=0
@@ -1005,9 +1017,9 @@ class WindowControllerMQTTHandler:
     async def _send_ack(self, ctype: str, payload: dict):
         """发送确认响应到网关（用于网关主动发起的消息）
 
-网关主动发起的消息（001/002/005）需要 HA 回复 errcode:0 确认，
-否则网关会重复重发。
-HA 主动下发的命令（003/004/006/007）由网关回复，HA 不需要再回复。
+        网关主动发起的消息（001/002/005）需要 HA 回复 errcode:0 确认，
+        否则网关会重复重发。
+        HA 主动下发的命令（003/004/006/007）由网关回复，HA 不需要再回复。
         """
         response_payload = {
             "head": PROTOCOL_HEAD,
@@ -1199,7 +1211,7 @@ HA 主动下发的命令（003/004/006/007）由网关回复，HA 不需要再�
             # 只有当 r_travel 实际存在于上报数据中时才推导设备状态，
             # 避免仅有 battery/voltage 上报时将 None != 0 误判为 "open"
             if "r_travel" in attributes:
-                device_status = "closed" if attributes["r_travel"] == 0 else "open"
+                device_status = DEVICE_STATUS_CLOSED if attributes["r_travel"] == 0 else DEVICE_STATUS_OPEN
                 await self.device_manager.update_device_status(device_sn, device_status, attributes)
             else:
                 # 没有 r_travel 时只更新属性，不覆盖设备的状态字段
@@ -1316,9 +1328,9 @@ HA 主动下发的命令（003/004/006/007）由网关回复，HA 不需要再�
                             attributes["r_travel"] = travel_value
                             # 根据r_travel设置状态
                             if travel_value == 0:
-                                status = "closed"
+                                status = DEVICE_STATUS_CLOSED
                             else:
-                                status = "open"
+                                status = DEVICE_STATUS_OPEN
                         except (ValueError, TypeError) as e:
                             _LOGGER.error("设备 %s 位置状态格式错误: %s, 值: %s", device_sn, e, value)
                     elif attribute == "rwp_wind_lock_mode":
@@ -1336,32 +1348,32 @@ HA 主动下发的命令（003/004/006/007）由网关回复，HA 不需要再�
         # 回复 005 确认，告知网关已收到设备上报，避免网关重复重发
         await self._send_ack("005", payload)
 
-async def _handle_ctype_006(self, payload, ctype, data):
-"""处理协议类型006：HA 主动发起命令的网关回复
+    async def _handle_ctype_006(self, payload, ctype, data):
+        """处理协议类型006：HA 主动发起命令的网关回复
 
-006 是 HA 主动下发的命令，网关回复 errcode:0 表示已收到。
-HA 不需要回复确认，收到回复后取消重发定时器。
-"""
-# 收到网关回复，取消重发定时器
-self._clear_pending_command(payload.get("id", 0))
+        006 是 HA 主动下发的命令，网关回复 errcode:0 表示已收到。
+        HA 不需要回复确认，收到回复后取消重发定时器。
+        """
+        # 收到网关回复，取消重发定时器
+        self._clear_pending_command(payload.get("id", 0))
 
-errcode = data.get("errcode", -1)
-if errcode == 0:
-_LOGGER.debug("006 命令执行成功: %s", data)
-else:
-_LOGGER.warning("006 命令执行失败，错误码: %d, data: %s", errcode, data)
+        errcode = data.get("errcode", -1)
+        if errcode == 0:
+            _LOGGER.debug("006 命令执行成功: %s", data)
+        else:
+            _LOGGER.warning("006 命令执行失败，错误码: %d, data: %s", errcode, data)
 
-async def _handle_ctype_007(self, payload, ctype, data):
-"""处理协议类型007：HA 主动发起命令的网关回复
+    async def _handle_ctype_007(self, payload, ctype, data):
+        """处理协议类型007：HA 主动发起命令的网关回复
 
-007 是 HA 主动下发的命令，网关回复 errcode:0 表示已收到。
-HA 不需要回复确认，收到回复后取消重发定时器。
-"""
-# 收到网关回复，取消重发定时器
-self._clear_pending_command(payload.get("id", 0))
+        007 是 HA 主动下发的命令，网关回复 errcode:0 表示已收到。
+        HA 不需要回复确认，收到回复后取消重发定时器。
+        """
+        # 收到网关回复，取消重发定时器
+        self._clear_pending_command(payload.get("id", 0))
 
-errcode = data.get("errcode", -1)
-if errcode == 0:
-_LOGGER.debug("007 命令执行成功: %s", data)
-else:
-_LOGGER.warning("007 命令执行失败，错误码: %d, data: %s", errcode, data)
+        errcode = data.get("errcode", -1)
+        if errcode == 0:
+            _LOGGER.debug("007 命令执行成功: %s", data)
+        else:
+            _LOGGER.warning("007 命令执行失败，错误码: %d, data: %s", errcode, data)

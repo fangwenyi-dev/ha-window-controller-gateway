@@ -365,8 +365,11 @@ async def async_setup_entry(
             # 生成删除按钮的唯一ID
             remove_button_unique_id = f"{gateway_sn}_remove_{device_sn}"
             
-            # 直接添加删除按钮，不检查实体是否存在
-            # HA 会自动处理重复实体，确保按钮始终可用
+            # 启动循环无条件创建实体：
+            # 实体注册表条目跨重启/重载持久保留，用注册表查重会导致重启后
+            # 所有实体只有注册表条目、没有平台实例（不可用）。
+            # 重复添加由 HA 按 unique_id 自动去重（替换更新），
+            # 与回调路径（on_device_added 查注册表）配合不会重复创建。
             remove_button = GatewayDeviceRemoveButton(
                 hass,
                 device_manager,

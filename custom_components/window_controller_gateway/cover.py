@@ -229,6 +229,10 @@ async def async_setup_entry(
             device_sn = device["sn"]
             device_name = device["name"]
 
+            # 启动循环无条件创建 Cover：
+            # 注册表条目跨重启/重载持久保留，用注册表查重会导致重启后
+            # 实体只有注册表条目、没有平台实例（不可用）。
+            # 重复添加由 HA 按 unique_id 自动去重（替换更新）。
             cover = WindowControllerCover(
                 hass,
                 device_manager,

@@ -133,9 +133,12 @@ async def async_ignore_gateway(hass: HomeAssistant, gateway_sn: str):
     hass.data[DOMAIN]["discovery"]["ignored_gateways"].add(gateway_sn)
     
     # 从实体注册表中删除相关实体
+    # 使用前缀边界匹配（unique_id 格式为 {gateway_sn}_{...}），
+    # 避免 SN 前缀相同的两个网关（如 ABC123 / ABC1234）互相误删对方的实体
     entity_registry = er.async_get(hass)
+    prefix = f"{gateway_sn.lower()}_"
     for entity in list(entity_registry.entities.values()):
-        if entity.platform == DOMAIN and gateway_sn in entity.unique_id:
+        if entity.platform == DOMAIN and entity.unique_id and entity.unique_id.lower().startswith(prefix):
             entity_registry.async_remove(entity.entity_id)
             _LOGGER.debug("删除网关 %s 的实体: %s", gateway_sn, entity.entity_id)
 

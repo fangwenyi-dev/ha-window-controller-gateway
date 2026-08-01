@@ -436,9 +436,9 @@ def test_get_device_display_name(tr: TestResult):
 async def test_mqtt_ack_rules(tr: TestResult):
     """测试 4: MQTT ACK 规则验证
 
-    规则：
-    - 002/005/006/007/008/009/010: 网关上报，HA 需回复 ACK
-    - 001/003/004: HA 发起，网关回复，HA 不回复
+    规则（与协议文档一致）：
+    - 001/002/005: 网关上报，HA 需回复 ACK
+    - 003/004/006/007: HA 主动发起，网关回复，HA 不回复 ACK（008/009/010 已从协议中移除）
     """
     PUBLISHED_MESSAGES.clear()
 
@@ -494,17 +494,17 @@ async def test_mqtt_ack_rules(tr: TestResult):
     else:
         tr.fail("004 不应ACK", f"期望0个ACK，实际{ack_count}个")
 
-    # 测试 006/007/008/009/010 - 应该回复 ACK
-    for ctype in ["006", "007", "008", "009", "010"]:
+    # 测试 006/007 - HA 主动发起的命令，HA 不回复 ACK
+    for ctype in ["006", "007"]:
         PUBLISHED_MESSAGES.clear()
-        msg = make_msg(ctype, 1000 + int(ctype), GATEWAY_SN, {"test": "data"})
+        msg = make_msg(ctype, 1000 + int(ctype), GATEWAY_SN, {"errcode": 0})
         handler_method = getattr(handler, f"_handle_ctype_{ctype}")
         await handler_method(msg, ctype, msg["data"])
         ack_count = sum(1 for m in PUBLISHED_MESSAGES if m["ctype"] == ctype and m["has_errcode"])
-        if ack_count == 1:
-            tr.ok(f"{ctype} 网关上报 - HA 回复 ACK")
+        if ack_count == 0:
+            tr.ok(f"{ctype} HA主动发起命令 - HA 不回复 ACK")
         else:
-            tr.fail(f"{ctype} ACK", f"期望1个ACK，实际{ack_count}个")
+            tr.fail(f"{ctype} 不应ACK", f"期望0个ACK，实际{ack_count}个")
 
 
 async def test_mqtt_message_dedup(tr: TestResult):
@@ -1758,7 +1758,7 @@ async def test_all_ctypes_have_handlers(tr: TestResult):
     device_manager = MockDeviceManager()
     handler = mqtt_handler_mod.WindowControllerMQTTHandler(hass, "1001ABCD1234", device_manager)
 
-    expected_handlers = ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"]
+    expected_handlers = ["001", "002", "003", "004", "005", "006", "007"]
     for ctype in expected_handlers:
         handler_name = f"_handle_ctype_{ctype}"
         if hasattr(handler, handler_name):

@@ -16,7 +16,7 @@ from .const import (
     CONF_GATEWAY_SN, 
     CONF_GATEWAY_NAME, 
     DEFAULT_GATEWAY_NAME,
-    DEVICE_SETUP_DELAY
+    GATEWAY_CONNECT_TIMEOUT
 )
 from .mqtt_handler import WindowControllerMQTTHandler
 
@@ -143,7 +143,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         _LOGGER.info("处理网关发现: %s", discovery_info)
         
         gateway_sn = discovery_info.get("gateway_sn")
-        gateway_name = discovery_info.get("gateway_name", f"慧尖网关 {gateway_sn[-4:]}")
+        # 防御：gateway_sn 缺失时避免 `gateway_sn[-4:]` 直接 TypeError
+        gateway_name = discovery_info.get("gateway_name")
+        if not gateway_name:
+            gateway_name = f"慧尖网关 {gateway_sn[-4:]}" if gateway_sn else DEFAULT_GATEWAY_NAME
         replace_mode = discovery_info.get("replace_mode", False)
         current_gateway_sn = discovery_info.get("current_gateway_sn")
         
@@ -325,8 +328,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # 不再发送无效的 002 发现命令。
             # await mqtt_handler.check_connection()  # 旧逻辑：发送 002，网关不响应
 
-            # 等待网关主动上报（网关在线时会主动发送 001/002 消息）
-            await asyncio.sleep(DEVICE_SETUP_DELAY)
+            # 轮询等待网关主动上报：一旦收到立即通过，最多等待 GATEWAY_CONNECT_TIMEOUT 秒。
+            # 固定 sleep 会漏掉上报频率较低（心跳间隔长）但实际在线的网关。
+            waited = 0.0
+            poll_interval = 0.5
+            while waited < GATEWAY_CONNECT_TIMEOUT and not mqtt_handler.connected:
+                await asyncio.sleep(poll_interval)
+                waited += poll_interval
 
             # 检查网关是否主动上报了消息（connected 由 handle_gateway_response 设置）
             connected = mqtt_handler.connected
@@ -334,7 +342,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if connected:
                 _LOGGER.info("Gateway connectivity test passed")
             else:
-                _LOGGER.warning("Gateway connectivity test failed (no response from gateway)")
+                _LOGGER.warning(
+                    "Gateway connectivity test failed (no response within %.0f s)",
+                    GATEWAY_CONNECT_TIMEOUT,
+                )
 
             return connected
 

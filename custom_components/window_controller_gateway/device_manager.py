@@ -18,11 +18,11 @@ from .const import (
     MANUFACTURER,
     MODEL,
     DEVICE_TO_GATEWAY_MAPPING,
-    DEVICE_TO_GATEWAY_MAPPING_FILE,
     GLOBAL_MANUALLY_REMOVED_DEVICES,
-    DEVICE_REGISTRATION_DELAY,
+    DEVICE_STATUS_UNKNOWN,
+    DEVICE_STATUS_CONNECTED,
+    DEVICE_STATUS_ERROR,
     GATEWAY_READY_DELAY,
-    DEVICE_SETUP_DELAY,
     get_device_display_name,
 )
 from .persist import save_persistent_data
@@ -50,7 +50,6 @@ class WindowControllerDeviceManager:
         self._entity_registry_cache = None
         self._is_migrating = False
         self._migration_lock = asyncio.Lock()
-        self._status_query_semaphore = asyncio.Semaphore(3)  # 同时最多3个状态查询
         self._manually_removed_devices = self._load_manually_removed_devices()
         self._background_tasks = []
     
@@ -145,9 +144,10 @@ class WindowControllerDeviceManager:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     def _spawn_background_task(self, coro, name=None):
-        """创建受追踪的后台任务"""
+        """创建受追踪的后台任务，任务完成时自动从列表移除，避免无限增长"""
         task = asyncio.create_task(coro, name=name)
         self._background_tasks.append(task)
+        task.add_done_callback(lambda t: self._background_tasks.remove(t) if t in self._background_tasks else None)
         return task
 
     async def setup(self) -> bool:
@@ -184,7 +184,7 @@ class WindowControllerDeviceManager:
                         "sn": device_sn,
                         "name": device_name,
                         "type": DEVICE_TYPE_WINDOW_OPENER,
-                        "status": "offline",
+                        "status": DEVICE_STATUS_UNKNOWN,
                         "attributes": {}
                     }
                     _LOGGER.info("同步加载设备到内存: %s", device_sn)
@@ -229,62 +229,6 @@ class WindowControllerDeviceManager:
         # 设备注册和状态查询在后台异步完成
         return True
 
-    async def _quick_register_device(self, device_sn):
-        """快速注册设备（不阻塞主流程）"""
-        try:
-            device_registry = await self._get_device_registry()
-            device = device_registry.async_get_device(identifiers={(DOMAIN, device_sn)})
-            
-            if device:
-                # 设备已存在，快速更新关联
-                device_registry.async_update_device(
-                    device.id,
-                    via_device=(DOMAIN, self.gateway_sn)
-                )
-                _LOGGER.debug("快速更新设备 %s 的网关关联", device_sn)
-        except Exception as e:
-            _LOGGER.debug("快速注册设备失败（可忽略）: %s", e)
-
-    async def _reassociate_device(self, device_sn, device):
-        """重新关联设备到当前网关"""
-        try:
-            device_registry = await self._get_device_registry()
-            
-            # 更新设备关联
-            updated_device = device_registry.async_get_or_create(
-                config_entry_id=self.entry.entry_id,
-                identifiers={(DOMAIN, device_sn)},
-                name=device.name,
-                manufacturer=MANUFACTURER,
-                model=self._get_device_model(DEVICE_TYPE_WINDOW_OPENER),
-                via_device=(DOMAIN, self.gateway_sn)
-            )
-            
-            # 添加到设备列表
-            self.devices[device_sn] = {
-                "sn": device_sn,
-                "name": device.name,
-                "type": DEVICE_TYPE_WINDOW_OPENER,
-                "status": "online",
-                "attributes": {}
-            }
-            
-            _LOGGER.info("设备重新关联成功: %s -> %s", device_sn, self.gateway_sn)
-            
-        except Exception as e:
-            _LOGGER.error("重新关联设备失败 %s: %s", device_sn, e)
-    
-    async def _process_device_async(self, device_sn, device):
-        """异步处理单个设备"""
-        self.devices[device_sn] = {
-            "sn": device_sn,
-            "name": device.name,
-            "type": DEVICE_TYPE_WINDOW_OPENER,
-            "status": "online",
-            "attributes": {}
-        }
-        _LOGGER.debug("加载设备: %s, 名称: %s", device_sn, device.name)
-    
     async def _async_fast_register_device(self, device_sn: str, device_name: str):
         """异步快速注册设备（不阻塞主流程）"""
         try:
@@ -371,48 +315,6 @@ class WindowControllerDeviceManager:
         if device_sn_suffix not in device_name:
             return f"{device_name} ({device_sn_suffix})"
         return device_name
-    
-    def _get_optimal_concurrent_tasks(self):
-        """获取固定并发任务数
-        
-        Returns:
-            int: 固定并发任务数
-        """
-        return 5
-    
-    def _calculate_adaptive_query_interval(self, device_count: int) -> float:
-        """根据设备数量计算自适应查询间隔
-        
-        Args:
-            device_count: 设备数量
-            
-        Returns:
-            float: 查询间隔（秒）
-        """
-        if device_count <= 3:
-            return 0.1
-        elif device_count <= 10:
-            return 0.2
-        else:
-            return 0.3
-    
-    def _calculate_batch_size(self, device_count: int) -> int:
-        """根据设备数量计算批处理大小
-        
-        Args:
-            device_count: 设备数量
-            
-        Returns:
-            int: 批处理大小
-        """
-        if device_count <= 5:
-            return 5
-        elif device_count <= 20:
-            return 10
-        else:
-            return 15
-        
-
     
     def set_device_added_callback(self, callback: Callable[[str, Dict[str, Any]], None]):
         """添加设备添加回调
@@ -609,7 +511,7 @@ class WindowControllerDeviceManager:
             # 即使设备已存在，也要调用回调，确保实体被重新创建
             await self._notify_device_added_callbacks(device_sn, device_name_with_sn, device_type)
             _LOGGER.info("设备已存在，重新触发回调: %s", device_sn)
-            return self.devices[device_sn]
+            return device_sn
             
         device_info = {
             "sn": device_sn,
@@ -820,7 +722,7 @@ class WindowControllerDeviceManager:
             # 即使失败，也尝试记录错误状态
             try:
                 if device_sn in self.devices:
-                    self.devices[device_sn]["status"] = "error"
+                    self.devices[device_sn]["status"] = DEVICE_STATUS_ERROR
                     self.devices[device_sn]["last_update"] = time.time()
             except Exception:
                 _LOGGER.debug("记录设备错误状态失败，可忽略")
@@ -831,8 +733,15 @@ class WindowControllerDeviceManager:
         
     def get_all_devices(self) -> List[Dict[str, Any]]:
         """获取所有设备"""
-        # 返回设备列表的浅拷贝，避免外部修改影响内部状态
-        return [device.copy() for device in self.devices.values()]
+        # 返回设备列表的深拷贝，attributes 子字典也独立复制，
+        # 避免外部调用方修改 attributes 时污染内部状态
+        result = []
+        for device in self.devices.values():
+            copy = device.copy()
+            if isinstance(copy.get("attributes"), dict):
+                copy["attributes"] = dict(copy["attributes"])
+            result.append(copy)
+        return result
 
     async def rename_device(self, device_sn: str, new_name: str) -> bool:
         """重命名子设备并同步到HA注册表"""
@@ -1060,97 +969,6 @@ class WindowControllerDeviceManager:
         # 注意：不要清空手动删除设备列表，因为这是持久化的状态
         # 当网关重新添加时，需要知道哪些设备是被手动删除的
 
-    async def _validate_gateways_for_migration(self, old_gateway_sn: str, new_gateway_sn: str) -> Dict[str, Any]:
-        """验证网关状态是否适合迁移
-        
-        Args:
-            old_gateway_sn: 旧网关的SN号
-            new_gateway_sn: 新网关的SN号
-        
-        Returns:
-            Dict: 包含验证结果的字典
-                {
-                    'valid': bool,  # 是否可以迁移
-                    'warnings': List[str],  # 警告信息
-                    'errors': List[str]  # 错误信息
-                }
-        """
-        result = {
-            'valid': True,
-            'warnings': [],
-            'errors': []
-        }
-        
-        # 检查新网关是否与当前网关相同
-        if new_gateway_sn == self.gateway_sn:
-            _LOGGER.info("新网关与当前网关相同")
-        
-        # 检查旧网关是否在线（改为警告，不影响迁移）
-        old_gateway_online = await self._check_gateway_online(old_gateway_sn)
-        if not old_gateway_online:
-            # 检查旧网关是否存在于设备注册表中
-            device_registry = await self._get_device_registry()
-            old_gateway_device = device_registry.async_get_device(
-                identifiers={(DOMAIN, old_gateway_sn)}
-            )
-            
-            if old_gateway_device:
-                warning = f"旧网关 {old_gateway_sn[-6:]} 不在线，但在设备注册表中存在，将从注册表迁移"
-                _LOGGER.warning(warning)
-                result['warnings'].append(warning)
-            else:
-                # 检查配置条目是否存在
-                old_entry_exists = False
-                for entry in self.hass.config_entries.async_entries(DOMAIN):
-                    if entry.data.get(CONF_GATEWAY_SN, "").lower() == old_gateway_sn.lower():
-                        old_entry_exists = True
-                        break
-                
-                if old_entry_exists:
-                    warning = f"旧网关 {old_gateway_sn[-6:]} 不在线，但配置条目存在，将从配置迁移"
-                    _LOGGER.warning(warning)
-                    result['warnings'].append(warning)
-                else:
-                    error = f"旧网关 {old_gateway_sn[-6:]} 不在线且不存在于注册表中，无法迁移"
-                    _LOGGER.error(error)
-                    result['errors'].append(error)
-                    result['valid'] = False
-        
-        # 检查新网关是否有足够容量
-        new_gateway_devices = self._count_gateway_devices(new_gateway_sn)
-        old_gateway_devices = self._count_gateway_devices(old_gateway_sn)
-        
-        from .const import MAX_DEVICES_PER_GATEWAY
-        if new_gateway_devices + old_gateway_devices > MAX_DEVICES_PER_GATEWAY:
-            error = f"新网关容量不足，无法迁移所有设备（当前: {new_gateway_devices}，需要迁移: {old_gateway_devices}，最大: {MAX_DEVICES_PER_GATEWAY}）"
-            _LOGGER.error(error)
-            result['errors'].append(error)
-            result['valid'] = False
-        
-        # 检查设备兼容性
-        incompatible_devices = await self._check_device_compatibility(old_gateway_sn, new_gateway_sn)
-        if incompatible_devices:
-            warning = f"发现 {len(incompatible_devices)} 个可能不兼容的设备"
-            _LOGGER.warning(warning)
-            result['warnings'].append(warning)
-        
-        # 检查设备SN格式合法性
-        invalid_device_sns = await self._check_device_sn_format(old_gateway_sn)
-        if invalid_device_sns:
-            error = f"发现 {len(invalid_device_sns)} 个设备SN格式无效"
-            _LOGGER.error(error)
-            result['errors'].append(error)
-            result['valid'] = False
-        
-        # 检查设备是否已被手动删除
-        manually_removed_devices = await self._check_manually_removed_devices(old_gateway_sn)
-        if manually_removed_devices:
-            warning = f"发现 {len(manually_removed_devices)} 个设备已被手动删除，将被跳过"
-            _LOGGER.warning(warning)
-            result['warnings'].append(warning)
-        
-        return result
-    
     async def _check_gateway_online(self, gateway_sn: str) -> bool:
         """检查网关是否在线"""
         try:
@@ -1182,143 +1000,6 @@ class WindowControllerDeviceManager:
                     count += 1
         
         return count
-    
-    async def _check_device_compatibility(self, old_gateway_sn: str, new_gateway_sn: str) -> List[str]:
-        """检查设备兼容性"""
-        incompatible_devices = []
-        
-        try:
-            device_registry = await self._get_device_registry()
-            
-            for device in device_registry.devices.values():
-                # 检查设备是否有此集成的标识符
-                device_sn = None
-                for identifier in device.identifiers:
-                    if identifier[0] == DOMAIN:
-                        device_sn = identifier[1]
-                        break
-                
-                # 检查设备是否关联到旧网关
-                if device_sn and device_sn != old_gateway_sn:
-                    if hasattr(device, 'via_device') and device.via_device and device.via_device[1].lower() == old_gateway_sn.lower():
-                        # 这里可以添加更详细的兼容性检查
-                        # 例如：检查设备型号、固件版本等
-                        pass
-        except Exception as e:
-            _LOGGER.error("检查设备兼容性失败: %s", e)
-        
-        return incompatible_devices
-    
-    async def _check_device_sn_format(self, gateway_sn: str) -> List[str]:
-        """检查设备SN格式合法性"""
-        invalid_device_sns = []
-        
-        try:
-            device_registry = await self._get_device_registry()
-            
-            for device in device_registry.devices.values():
-                # 检查设备是否有此集成的标识符
-                device_sn = None
-                for identifier in device.identifiers:
-                    if identifier[0] == DOMAIN:
-                        device_sn = identifier[1]
-                        break
-                
-                # 检查设备是否关联到指定网关
-                if device_sn and device_sn != gateway_sn:
-                    if hasattr(device, 'via_device') and device.via_device and device.via_device[1].lower() == gateway_sn.lower():
-                        # 检查设备SN格式（允许字母和数字）
-                        import re
-                        if not re.match(r'^[a-zA-Z0-9]+$', device_sn) or len(device_sn) < 10:
-                            invalid_device_sns.append(device_sn)
-        except Exception as e:
-            _LOGGER.error("检查设备SN格式失败: %s", e)
-        
-        return invalid_device_sns
-    
-    async def _check_manually_removed_devices(self, gateway_sn: str) -> List[str]:
-        """检查设备是否已被手动删除"""
-        manually_removed_devices = []
-        
-        try:
-            device_registry = await self._get_device_registry()
-            
-            for device in device_registry.devices.values():
-                # 检查设备是否有此集成的标识符
-                device_sn = None
-                for identifier in device.identifiers:
-                    if identifier[0] == DOMAIN:
-                        device_sn = identifier[1]
-                        break
-                
-                # 检查设备是否关联到指定网关
-                if device_sn and device_sn != gateway_sn:
-                    if hasattr(device, 'via_device') and device.via_device and device.via_device[1].lower() == gateway_sn.lower():
-                        # 检查设备是否已被手动删除
-                        if device_sn in self._manually_removed_devices:
-                            manually_removed_devices.append(device_sn)
-        except Exception as e:
-            _LOGGER.error("检查手动删除设备失败: %s", e)
-        
-        return manually_removed_devices
-
-    async def validate_migration(self, old_gateway_sn, new_gateway_sn):
-        """执行迁移前的全面检查"""
-        _LOGGER.info("执行迁移前检查，旧网关: %s, 新网关: %s", old_gateway_sn, new_gateway_sn)
-        
-        checks = {
-            "gateways_exist": await self._check_gateways_exist(old_gateway_sn, new_gateway_sn),
-            "gateways_online": await self._check_gateways_online(old_gateway_sn, new_gateway_sn),
-            "device_compatibility": await self._check_device_compatibility_for_validate(old_gateway_sn),
-            "capacity_check": self._check_gateway_capacity(new_gateway_sn),
-        }
-        
-        errors = [k for k, v in checks.items() if not v.get("success")]
-        warnings = [k for k, v in checks.items() if v.get("warning")]
-        
-        _LOGGER.info("迁移前检查完成，错误: %s, 警告: %s", errors, warnings)
-        
-        return {
-            "can_proceed": len(errors) == 0,
-            "errors": errors,
-            "warnings": warnings,
-            "details": checks
-        }
-    
-    async def _check_gateways_exist(self, old_gateway_sn, new_gateway_sn):
-        """检查网关是否存在（即使不在线）"""
-        # 1. 检查配置条目是否存在
-        old_entry_exists = False
-        for entry in self.hass.config_entries.async_entries(DOMAIN):
-            if entry.data.get(CONF_GATEWAY_SN, "").lower() == old_gateway_sn.lower():
-                old_entry_exists = True
-                break
-        
-        # 2. 检查设备注册表中是否有旧网关设备
-        device_registry = await self._get_device_registry()
-        old_gateway_device = device_registry.async_get_device(
-            identifiers={(DOMAIN, old_gateway_sn)}
-        )
-        
-        return {
-            "success": old_entry_exists or old_gateway_device is not None,
-            "message": "网关存在" if old_entry_exists else "网关不存在"
-        }
-    
-    async def _check_gateways_online(self, old_gateway_sn, new_gateway_sn):
-        """检查网关是否在线"""
-        # 这里可以实现检查网关是否在线的逻辑
-        return {"success": True, "message": "网关在线"}
-    
-    async def _check_device_compatibility_for_validate(self, old_gateway_sn):
-        """检查设备兼容性（用于验证）"""
-        # 这里可以实现检查设备兼容性的逻辑
-        return {"success": True, "message": "设备兼容"}
-    
-    def _check_gateway_capacity(self, new_gateway_sn):
-        """检查网关容量"""
-        # 这里可以实现检查网关容量的逻辑
-        return {"success": True, "message": "容量足够"}
     
     async def _create_migration_snapshot(self, old_gateway_sn):
         """创建迁移快照"""
@@ -1447,13 +1128,6 @@ class WindowControllerDeviceManager:
             await self._recreate_platform_entities(new_gateway_sn, migrated_devices)
             _LOGGER.info("平台实体重新创建完成")
     
-    def _is_entity_belongs_to_device(self, entity_entry, device_sn):
-        """检查实体是否属于指定设备"""
-        # 检查实体的唯一标识符是否包含设备SN
-        if entity_entry.unique_id and device_sn in entity_entry.unique_id:
-            return True
-        return False
-    
     async def _recreate_platform_entities(self, new_gateway_sn: str, device_sns: List[str]):
         """重新创建平台实体 - 原地更新配置条目关联，避免删除重建造成的空窗期"""
         from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
@@ -1491,97 +1165,6 @@ class WindowControllerDeviceManager:
                     device_sn, device.name, DEVICE_TYPE_WINDOW_OPENER
                 )
 
-    async def _verify_entity_migration(self, old_gateway_sn: str, new_gateway_sn: str) -> bool:
-        """验证实体迁移是否成功"""
-        entity_registry = await self._get_entity_registry()
-        device_registry = await self._get_device_registry()
-        
-        # 获取新网关设备
-        new_gateway_device = device_registry.async_get_device(
-            identifiers={(DOMAIN, new_gateway_sn)}
-        )
-        
-        if not new_gateway_device:
-            _LOGGER.error("新网关设备未找到")
-            return False
-        
-        # 获取旧网关的设备列表（用于验证迁移完整性）
-        old_gateway_devices = await self._get_gateway_devices_from_registry(old_gateway_sn)
-        _LOGGER.info("旧网关有 %d 个设备需要迁移", len(old_gateway_devices))
-        
-        # 检查所有与新网关关联的设备
-        migrated_devices = []
-        for device in device_registry.devices.values():
-            if hasattr(device, 'via_device') and device.via_device:
-                if device.via_device[1].lower() == new_gateway_sn.lower():
-                    migrated_devices.append(device)
-        
-        _LOGGER.info("新网关关联了 %d 个设备", len(migrated_devices))
-        
-        # 如果没有设备关联到新网关，验证失败
-        if len(migrated_devices) == 0:
-            _LOGGER.warning("没有设备关联到新网关")
-            return False
-        
-        # 验证旧网关的设备是否都已迁移到新网关
-        migrated_device_sns = []
-        for device in migrated_devices:
-            for identifier in device.identifiers:
-                if identifier[0] == DOMAIN:
-                    migrated_device_sns.append(identifier[1])
-                    break
-        
-        # 检查未迁移的设备
-        not_migrated = []
-        for device_sn in old_gateway_devices:
-            if device_sn not in migrated_device_sns:
-                not_migrated.append(device_sn)
-        
-        if not_migrated:
-            _LOGGER.warning("以下设备未迁移: %s", not_migrated)
-        else:
-            _LOGGER.info("所有旧网关设备都已成功迁移")
-        
-        # 检查每个设备的实体
-        total_entities = 0
-        entities_with_issues = []
-        
-        for device in migrated_devices:
-            device_entities = []
-            for entity_id, entity_entry in entity_registry.entities.items():
-                if entity_entry.device_id == device.id:
-                    device_entities.append(entity_id)
-            
-            _LOGGER.info("设备 %s 有 %d 个实体", device.name, len(device_entities))
-            total_entities += len(device_entities)
-            
-            # 检查设备是否有实体（某些设备可能没有实体，这是正常的）
-            if len(device_entities) == 0:
-                device_sn = None
-                for identifier in device.identifiers:
-                    if identifier[0] == DOMAIN:
-                        device_sn = identifier[1]
-                        break
-                if device_sn:
-                    _LOGGER.info("设备 %s 没有实体（这可能是正常的）", device_sn)
-        
-        _LOGGER.info("总共 %d 个实体已迁移到新网关", total_entities)
-        
-        # 检查实体关联问题
-        if entities_with_issues:
-            _LOGGER.warning("以下实体存在关联问题: %s", entities_with_issues)
-        
-        # 优化验证逻辑：
-        # 1. 如果有旧网关设备需要迁移，至少要有一个设备成功迁移
-        # 2. 如果没有旧网关设备需要迁移，验证通过
-        # 3. 实体数量不是验证的必要条件，因为某些设备可能没有实体
-        if old_gateway_devices:
-            return len(migrated_devices) > 0
-        else:
-            # 没有旧网关设备需要迁移，验证通过
-            _LOGGER.info("没有旧网关设备需要迁移，验证通过")
-            return True
-    
     async def _get_gateway_devices_from_registry(self, gateway_sn):
         """从设备注册表中获取网关的设备信息（即使不在线）"""
         device_registry = await self._get_device_registry()
@@ -1778,41 +1361,41 @@ class WindowControllerDeviceManager:
                            "将使用新网关的 entry_id 作为回退", old_gateway_sn)
             old_gateway_entry_id = self.entry.entry_id
 
-        # 3. 恢复设备到旧网关
+        # 3. 恢复设备到旧网关：只回滚快照中记录的旧网关设备，
+        #    绝不触碰新网关迁移前本来就有的设备（原实现遍历"所有 via 新网关的设备"，
+        #    会把新网关原有设备也改绑到旧网关，导致设备"消失"）
+        old_gateway_devices = snapshot.get("old_gateway_devices", [])
+        if not old_gateway_devices:
+            _LOGGER.warning("快照中无设备记录，跳过设备回滚（映射表仍会尝试恢复）")
+
         try:
             device_registry = await self._get_device_registry()
 
-            # 查找所有需要回滚的设备
-            for device in device_registry.devices.values():
-                # 检查设备是否有此集成的标识符
-                device_sn = None
-                for identifier in device.identifiers:
-                    if identifier[0] == DOMAIN:
-                        device_sn = identifier[1]
-                        break
+            for device_sn in old_gateway_devices:
+                # 在注册表中定位该设备（identifiers 精确匹配）
+                device = device_registry.async_get_device(
+                    identifiers={(DOMAIN, device_sn)}
+                )
+                if not device:
+                    _LOGGER.warning("回滚时未找到设备 %s，跳过", device_sn)
+                    continue
 
-                # 只有当设备有此集成的标识符且不是网关本身时才处理
-                if device_sn and device_sn != old_gateway_sn:
-                    # 检查设备是否关联到当前网关（新网关）
-                    if hasattr(device, 'via_device') and device.via_device and device.via_device[1].lower() == self.gateway_sn.lower():
-                        # 恢复设备关联到旧网关：使用旧网关的 config_entry_id 和 via_device
-                        device_registry.async_get_or_create(
-                            config_entry_id=old_gateway_entry_id,
-                            identifiers={(DOMAIN, device_sn)},
-                            name=device.name,
-                            manufacturer=MANUFACTURER,
-                            model=device.model,
-                            via_device=(DOMAIN, old_gateway_sn)
-                        )
-                        _LOGGER.info("已回滚设备 %s 到旧网关 %s (entry_id=%s)",
-                                     device_sn, old_gateway_sn, old_gateway_entry_id)
-            
-            # 4. 恢复设备到网关映射表
+                # 恢复设备关联到旧网关：使用旧网关的 config_entry_id 和 via_device
+                device_registry.async_get_or_create(
+                    config_entry_id=old_gateway_entry_id,
+                    identifiers={(DOMAIN, device_sn)},
+                    name=device.name,
+                    manufacturer=MANUFACTURER,
+                    model=device.model,
+                    via_device=(DOMAIN, old_gateway_sn)
+                )
+                _LOGGER.info("已回滚设备 %s 到旧网关 %s (entry_id=%s)",
+                             device_sn, old_gateway_sn, old_gateway_entry_id)
+
+            # 4. 恢复设备到网关映射表（只恢复快照中的设备，同样不触碰新网关原有设备）
             if DEVICE_TO_GATEWAY_MAPPING in self.hass.data[DOMAIN]:
                 device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
-                
-                # 查找所有需要回滚的设备
-                old_gateway_devices = await self._get_gateway_devices_from_registry(self.gateway_sn)
+
                 for device_sn in old_gateway_devices:
                     device_to_gateway_mapping[device_sn] = old_gateway_sn
                     _LOGGER.info("已恢复设备 %s 的网关映射到旧网关", device_sn)
@@ -1823,242 +1406,3 @@ class WindowControllerDeviceManager:
         except Exception as e:
             _LOGGER.error("回滚失败: %s", e)
             return False
-
-    async def migrate_devices(self, old_gateway_sn: str, delete_old_devices: bool = False):
-        """将子设备从旧网关迁移到当前网关
-        
-        Args:
-            old_gateway_sn: 旧网关的SN号
-            delete_old_devices: 是否删除旧网关的子设备，默认为False
-        
-        Returns:
-            bool: 迁移是否成功
-        """
-        # 双重检查避免不必要的锁获取
-        if self._is_migrating:
-            _LOGGER.warning("设备迁移正在进行中，请等待")
-            return False
-        
-        async with self._migration_lock:
-            if self._is_migrating:  # 再次检查
-                return False
-            
-            self._is_migrating = True
-            try:
-                return await self._do_migrate(old_gateway_sn, delete_old_devices)
-            finally:
-                self._is_migrating = False
-    
-    async def _do_migrate(self, old_gateway_sn: str, delete_old_devices: bool = False):
-        """执行实际的迁移逻辑"""
-        _LOGGER.info("开始将设备从旧网关 %s 迁移到新网关 %s", old_gateway_sn, self.gateway_sn)
-        
-        # 验证网关状态
-        validation_result = await self._validate_gateways_for_migration(old_gateway_sn, self.gateway_sn)
-                
-        # 记录验证结果
-        if validation_result['warnings']:
-            for warning in validation_result['warnings']:
-                _LOGGER.warning("迁移警告: %s", warning)
-        
-        if validation_result['errors']:
-            for error in validation_result['errors']:
-                _LOGGER.error("迁移错误: %s", error)
-            return False
-        
-        device_registry = await self._get_device_registry()
-        migrated_devices = []
-        old_devices = []
-        
-        # 创建备份，用于回滚
-        backup = {
-            'devices': self.devices.copy(),
-            'mapping': self.hass.data[DOMAIN].get(DEVICE_TO_GATEWAY_MAPPING, {}).copy(),
-            'migrated_devices': []
-        }
-        
-        # 计算需要迁移的设备总数
-        total_devices = 0
-        for device in device_registry.devices.values():
-            has_domain_identifier = False
-            device_sn = None
-            for identifier in device.identifiers:
-                if identifier[0] == DOMAIN:
-                    has_domain_identifier = True
-                    device_sn = identifier[1]
-                    break
-            
-            if has_domain_identifier and device_sn and device_sn != old_gateway_sn:
-                if hasattr(device, 'via_device') and device.via_device and device.via_device[1].lower() == old_gateway_sn.lower():
-                    total_devices += 1
-        
-        migrated_count = 0
-        
-        # 查找旧网关关联的所有子设备
-        for device in device_registry.devices.values():
-            # 检查设备是否有此集成的标识符
-            has_domain_identifier = False
-            device_sn = None
-            
-            for identifier in device.identifiers:
-                if identifier[0] == DOMAIN:
-                    has_domain_identifier = True
-                    device_sn = identifier[1]
-                    break
-            
-            # 只有当设备有此集成的标识符且不是网关本身时才处理
-            if has_domain_identifier and device_sn and device_sn != old_gateway_sn:
-                # 检查设备是否关联到旧网关
-                if hasattr(device, 'via_device') and device.via_device and device.via_device[1].lower() == old_gateway_sn.lower():
-                    _LOGGER.info("找到关联到旧网关的设备: %s", device_sn)
-                    old_devices.append(device_sn)
-                    
-                    # 检查配置条目是否存在
-                    config_entry = self.hass.config_entries.async_get_entry(self.entry.entry_id)
-                    if not config_entry:
-                        _LOGGER.error("配置条目不存在，无法迁移设备: %s", device_sn)
-                        continue
-                    
-                    # 更新设备注册信息，将其关联到新网关
-                    updated_device = device_registry.async_get_or_create(
-                        config_entry_id=self.entry.entry_id,
-                        identifiers={(DOMAIN, device_sn)},
-                        name=device.name,
-                        manufacturer=MANUFACTURER,
-                        model=device.model,
-                        via_device=(DOMAIN, self.gateway_sn)
-                    )
-                    
-                    # 验证设备关联是否正确更新
-                    if hasattr(updated_device, 'via_device') and updated_device.via_device and updated_device.via_device[1].lower() == self.gateway_sn.lower():
-                        _LOGGER.info("设备 %s 已成功迁移到新网关", device_sn)
-                        migrated_devices.append(device_sn)
-                        backup['migrated_devices'].append(device_sn)
-                        
-                        # 先更新设备到网关映射表，将设备从旧网关映射到新网关
-                        if DEVICE_TO_GATEWAY_MAPPING in self.hass.data[DOMAIN]:
-                            device_to_gateway_mapping = self.hass.data[DOMAIN][DEVICE_TO_GATEWAY_MAPPING]
-                            device_to_gateway_mapping[device_sn] = self.gateway_sn
-                            _LOGGER.info("设备 %s 的网关映射已更新为 %s", device_sn, self.gateway_sn)
-                        
-                        # 将设备添加到当前网关的设备列表中（使用 force=True 跳过检查）
-                        await self.add_device(device_sn, device.name, force=True)
-                        
-                        # 更新迁移计数并发送进度通知（仅在成功迁移时递增）
-                        migrated_count += 1
-                        
-                        # 减少通知频率，每5个设备或每20%进度发送一次通知
-                        # 检查是否需要发送进度通知
-                        should_notify = self._should_notify_progress(migrated_count, total_devices)
-                        
-                        if should_notify:
-                            try:
-                                progress_percent = (migrated_count / total_devices) * 100 if total_devices > 0 else 100
-                                await self.hass.services.async_call(
-                                    "persistent_notification",
-                                    "create",
-                                    {
-                                        "title": "设备迁移进度",
-                                        "message": (
-                                            f"迁移进度: {migrated_count}/{total_devices} ({progress_percent:.1f}%)\n"
-                                            f"最新迁移: {device.name} ({device_sn[-6:]})\n"
-                                            f"旧网关: {old_gateway_sn[-6:]} \n"
-                                            f"新网关: {self.gateway_sn[-6:]}"
-                                        ),
-                                        "notification_id": "window_controller_migration"
-                                    },
-                                    blocking=False
-                                )
-                            except Exception as notify_error:
-                                _LOGGER.warning("发送进度通知失败: %s", notify_error)
-                else:
-                    _LOGGER.warning("设备 %s 未成功迁移到新网关", device_sn)
-        
-        # 统一转移所有实体，避免重复处理
-        if migrated_devices:
-            try:
-                _LOGGER.info("开始统一转移所有实体的关联")
-                await self._transfer_entities_complete(
-                    old_gateway_sn,
-                    self.gateway_sn
-                )
-                _LOGGER.info("已统一转移所有实体的关联")
-            except Exception as e:
-                _LOGGER.error("统一转移实体失败: %s", e)
-            
-            # 如果需要删除旧网关的子设备
-            if delete_old_devices and old_devices:
-                _LOGGER.info("开始删除旧网关 %s 的子设备", old_gateway_sn)
-                
-                # 获取实体注册表，用于清理旧网关的实体
-                entity_registry = await self._get_entity_registry()
-                
-                for device_sn in old_devices:
-                    # 清理旧网关的实体
-                    _LOGGER.info("开始清理设备 %s 的旧网关实体", device_sn)
-                    
-                    # 查找与该设备关联的所有实体
-                    # P0 修复：使用 list() 创建副本再遍历，避免在遍历 entity_registry.entities 时
-                    # 调用 async_remove 修改字典导致 RuntimeError: dictionary changed size during iteration
-                    for entity_id, entity_entry in list(entity_registry.entities.items()):
-                        if entity_entry.device_id:
-                            # 检查实体是否属于当前设备
-                            device = device_registry.async_get(entity_entry.device_id)
-                            if device:
-                                for identifier in device.identifiers:
-                                    if identifier[0] == DOMAIN and identifier[1] == device_sn:
-                                        # 从实体注册表中删除实体
-                                        try:
-                                            entity_registry.async_remove(entity_id)
-                                            _LOGGER.info("已清理旧网关实体: %s", entity_id)
-                                        except Exception as e:
-                                            _LOGGER.error("清理旧网关实体失败: %s", e)
-            
-        # 发送迁移完成通知
-        if migrated_devices:
-            _LOGGER.info("设备迁移完成，成功迁移 %d 个设备", len(migrated_devices))
-            try:
-                await self.hass.services.async_call(
-                    "persistent_notification",
-                    "create",
-                    {
-                        "title": "设备迁移完成",
-                        "message": (
-                            f"成功将 {len(migrated_devices)} 个设备从旧网关 {old_gateway_sn[-6:]} 迁移到新网关 {self.gateway_sn[-6:]}\n"
-                            f"迁移的设备包括: {', '.join([d[-6:] for d in migrated_devices])}"
-                        ),
-                        "notification_id": "window_controller_migration"
-                    },
-                    blocking=False
-                )
-            except Exception as notify_error:
-                _LOGGER.warning("发送迁移完成通知失败: %s", notify_error)
-        else:
-            _LOGGER.info("没有设备需要迁移")
-        
-        return True
-    
-    def _should_notify_progress(self, current_count, total_count):
-        """检查是否需要发送进度通知
-        
-        减少通知频率，每5个设备或每20%进度发送一次通知
-        """
-        if total_count == 0:
-            return False
-        
-        # 每5个设备发送一次通知
-        if current_count % 5 == 0:
-            return True
-        
-        # 每20%进度边界发送一次通知（使用整数除法判断是否跨越边界）
-        # 例如 total=7: 20%边界在 2/7, 4/7（近似），此处用整数倍数检测
-        prev_percent = ((current_count - 1) * 100) // total_count
-        curr_percent = (current_count * 100) // total_count
-        if prev_percent // 20 != curr_percent // 20:
-            return True
-        
-        # 迁移完成时发送通知
-        if current_count == total_count:
-            return True
-        
-        return False

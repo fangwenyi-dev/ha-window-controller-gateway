@@ -259,8 +259,10 @@ async def async_setup_entry(
             async_add_entities(entities_to_add)
             _LOGGER.info("为新设备 %s 添加了传感器实体", device_name)
             
-            # 跟踪创建的传感器
-            created_sensors[device_sn] = sensors_to_track
+            # 合并到 created_sensors（而非整体替换）：
+            # 若启动循环/先前回调已跟踪了其他传感器（如 battery），
+            # 整体替换会丢失该记录，导致删除设备时残留孤儿实体
+            created_sensors.setdefault(device_sn, {}).update(sensors_to_track)
             
             # 注册状态更新回调
             # 注意：这里需要从hass.data中获取mqtt_handler
@@ -347,6 +349,10 @@ async def async_setup_entry(
             device_name = device.get("name")
             
             if device_sn and device_name:
+                # 启动循环无条件创建传感器：
+                # 注册表条目跨重启/重载持久保留，用注册表查重会导致重启后
+                # 实体只有注册表条目、没有平台实例（不可用）。
+                # 重复添加由 HA 按 unique_id 自动去重（替换更新）。
                 battery_sensor = WindowControllerBatterySensor(
                     hass,
                     device_manager,
@@ -355,9 +361,7 @@ async def async_setup_entry(
                     device_name
                 )
                 entities.append(battery_sensor)
-                if device_sn not in created_sensors:
-                    created_sensors[device_sn] = {}
-                created_sensors[device_sn]["battery"] = battery_sensor
+                created_sensors.setdefault(device_sn, {})["battery"] = battery_sensor
                 
                 status_sensor = WindowControllerStatusSensor(
                     hass,
@@ -367,9 +371,7 @@ async def async_setup_entry(
                     device_name
                 )
                 entities.append(status_sensor)
-                if device_sn not in created_sensors:
-                    created_sensors[device_sn] = {}
-                created_sensors[device_sn]["status"] = status_sensor
+                created_sensors.setdefault(device_sn, {})["status"] = status_sensor
                 
     except Exception as e:
         _LOGGER.error("传感器平台: 创建传感器实体时发生错误: %s", e, exc_info=True)

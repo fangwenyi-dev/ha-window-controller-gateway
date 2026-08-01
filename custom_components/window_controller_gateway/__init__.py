@@ -11,6 +11,8 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.const import Platform, EVENT_HOMEASSISTANT_STOP
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import (
@@ -26,7 +28,6 @@ from .const import (
     ATTR_NEW_NAME,
     SCAN_INTERVAL,
     DEVICE_TO_GATEWAY_MAPPING,
-    DEVICE_TO_GATEWAY_MAPPING_FILE,
     GLOBAL_MANUALLY_REMOVED_DEVICES,
     RESTART_DELAY,
     GATEWAY_PAIRING_TIMEOUT,
@@ -42,6 +43,11 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SENSOR, Platform.
 
 # 发现平台名称
 DISCOVERY_PLATFORM = "window_controller_gateway"
+
+# 记录已开启 debug_logging 的配置条目。
+# 模块 logger 由多个 entry 共享，直接 setLevel 会互相覆盖且在卸载后不恢复，
+# 因此用引用计数：任一 entry 开启则 DEBUG，全部关闭/卸载后恢复 NOTSET（继承 HA logger 配置）。
+_debug_logging_entries: set = set()
 
 async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
     """设置集成 - Home Assistant调用此函数加载集成"""
@@ -696,12 +702,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         auto_discovery = options.get("auto_discovery", True)
         debug_logging = options.get("debug_logging", False)
         
-        # P1 修复：启用/禁用调试日志时显式设置日志级别，避免关闭后仍为 DEBUG
+        # P1 修复：启用/禁用调试日志时使用引用计数控制模块 logger 级别。
+        # 不再无条件 setLevel，避免多网关互相覆盖、卸载后不恢复。
         if debug_logging:
+            _debug_logging_entries.add(entry.entry_id)
             _LOGGER.setLevel(logging.DEBUG)
             _LOGGER.info("调试日志已启用")
         else:
-            _LOGGER.setLevel(logging.INFO)
+            _debug_logging_entries.discard(entry.entry_id)
+            if not _debug_logging_entries:
+                _LOGGER.setLevel(logging.NOTSET)  # 恢复为继承 HA logger 配置
+                _LOGGER.info("调试日志已关闭（模块日志级别恢复为继承设置）")
 
         # 设置状态定期更新（取消定时设备发现，只保留连接检查）
         async def periodic_update(_now):
@@ -761,21 +772,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("开窗器网关 [%s] 设置完成", gateway_name)
         return True
 
+    except ConfigEntryNotReady:
+        # 不二次包装：保留原始 ConfigEntryNotReady 的可重试提示信息（HA 会展示给用户）
+        # 清理 debug_logging 引用计数，避免失败 entry 永久占用 DEBUG 级别
+        _debug_logging_entries.discard(entry.entry_id)
+        if not _debug_logging_entries:
+            _LOGGER.setLevel(logging.NOTSET)
+        await _cleanup_partial_setup(mqtt_handler, device_manager, unsub_listeners)
+        # 清理残留的 entry 数据，避免重试时读到脏状态
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+        _LOGGER.warning("设置网关 [%s] 失败（可重试），已清理部分初始化资源", gateway_name)
+        raise
     except Exception as e:
         _LOGGER.error("设置网关 [%s] 过程中失败: %s", gateway_name, e, exc_info=True)
-        
-        # 清理已创建的资源
-        if mqtt_handler:
-            await mqtt_handler.cleanup()
-        if device_manager and hasattr(device_manager, 'cleanup'):
-            await device_manager.cleanup()
-        for unsub in unsub_listeners:
-            unsub()
-            
-        if "MQTT" in str(e):
-            raise ConfigEntryNotReady(f"MQTT服务不可用: {e}") from e
-            
+        # 清理 debug_logging 引用计数，避免失败 entry 永久占用 DEBUG 级别
+        _debug_logging_entries.discard(entry.entry_id)
+        if not _debug_logging_entries:
+            _LOGGER.setLevel(logging.NOTSET)
+        await _cleanup_partial_setup(mqtt_handler, device_manager, unsub_listeners)
+        # 清理残留的 entry 数据，避免后续操作读到已清理的 manager 引用
+        hass.data[DOMAIN].pop(entry.entry_id, None)
         return False
+
+async def _cleanup_partial_setup(mqtt_handler, device_manager, unsub_listeners) -> None:
+    """清理 async_setup_entry 中途失败时已创建的部分资源（幂等，各步骤独立容错）"""
+    if mqtt_handler:
+        try:
+            await mqtt_handler.cleanup()
+        except Exception as e:
+            _LOGGER.debug("清理MQTT处理器异常: %s", e)
+    if device_manager and hasattr(device_manager, 'cleanup'):
+        try:
+            await device_manager.cleanup()
+        except Exception as e:
+            _LOGGER.debug("清理设备管理器异常: %s", e)
+    for unsub in (unsub_listeners or []):
+        try:
+            unsub()
+        except Exception as e:
+            _LOGGER.debug("取消监听器异常: %s", e)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """卸载配置条目"""
@@ -851,6 +886,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         unload_successful = False
 
     # 6. 最后移除数据
+    # 恢复调试日志引用计数：卸载的 entry 不再占用 DEBUG 级别
+    if entry_id in _debug_logging_entries:
+        _debug_logging_entries.discard(entry_id)
+        if not _debug_logging_entries:
+            _LOGGER.setLevel(logging.NOTSET)
     if unload_successful:
         hass.data[DOMAIN].pop(entry_id, None)
         _LOGGER.info("配置条目 %s 卸载成功", entry_id)
@@ -890,6 +930,35 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         
         # 保存更新后的持久化数据
         await save_persistent_data(hass)
+    
+    # 清理设备注册表中该网关的设备条目（含其下实体）。
+    # 若残留，async_discover_gateway 的"已在设备注册表中"检查会永久屏蔽该网关，
+    # 导致删除后的网关再也无法被自动发现，只能手动添加。
+    try:
+        device_registry = dr.async_get(hass)
+        gateway_device = device_registry.async_get_device(
+            identifiers={(DOMAIN, gateway_sn)}
+        )
+        if gateway_device:
+            # 仅当该设备只关联到当前（被删除的）配置条目时才整删。
+            # 若被其他 entry 共享（罕见：同 SN 多 entry），整删会误伤另一网关。
+            entry_ids = getattr(gateway_device, "config_entry_ids", None) or set()
+            if entry_ids and entry_ids != {entry.entry_id}:
+                _LOGGER.info(
+                    "网关设备 %s 同时关联其他配置条目（%s），仅清理映射、保留设备注册表条目",
+                    gateway_sn, sorted(entry_ids - {entry.entry_id}),
+                )
+            else:
+                # 先删除该网关设备下的所有实体，避免留下孤儿实体
+                entity_registry = er.async_get(hass)
+                for entity_entry in list(entity_registry.entities.values()):
+                    if entity_entry.device_id == gateway_device.id:
+                        entity_registry.async_remove(entity_entry.entity_id)
+                # 再删除网关设备条目本身
+                device_registry.async_remove_device(gateway_device.id)
+                _LOGGER.info("已删除网关 %s 的设备注册表条目（含其下实体）", gateway_sn)
+    except Exception as e:
+        _LOGGER.error("删除网关 %s 的设备注册表条目失败: %s", gateway_sn, e)
 
 
 async def _background_initialization(mqtt_handler):
