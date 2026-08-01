@@ -935,6 +935,10 @@ class WindowControllerDeviceManager:
                                 unique_id=entity_entry.unique_id,
                                 config_entry=target_entry,
                                 device_id=device.id,
+                                # 保留用户自定义名称与别名，避免转移后丢失
+                                name=entity_entry.name,
+                                original_name=entity_entry.original_name,
+                                aliases=entity_entry.aliases,
                             )
                             _LOGGER.debug("已更新实体 %s 的配置条目关联", entity_id)
         except Exception as e:

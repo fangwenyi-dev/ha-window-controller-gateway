@@ -981,6 +981,25 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     except Exception as e:
         _LOGGER.error("删除网关 %s 的设备注册表条目失败: %s", gateway_sn, e)
 
+    # 清理该网关的子设备注册表条目（via_device 指向该网关）。
+    # 否则子设备条目残留为孤儿设备（config_entry 已删，无法被管理，脏数据）。
+    try:
+        device_registry = dr.async_get(hass)
+        entity_registry = er.async_get(hass)
+        for device in list(device_registry.devices.values()):
+            via = getattr(device, "via_device", None)
+            if via and via[0] == DOMAIN and via[1].lower() == gateway_sn.lower():
+                # 先删除该子设备下的实体（仅限属于被删除网关 entry 的实体），
+                # 再删除设备条目本身
+                for entity_entry in list(entity_registry.entities.values()):
+                    if (entity_entry.device_id == device.id
+                            and entity_entry.config_entry_id == entry.entry_id):
+                        entity_registry.async_remove(entity_entry.entity_id)
+                device_registry.async_remove_device(device.id)
+                _LOGGER.info("已删除网关 %s 的子设备注册表条目: %s", gateway_sn, device.id)
+    except Exception as e:
+        _LOGGER.error("删除网关 %s 的子设备注册表条目失败: %s", gateway_sn, e)
+
 
 async def _background_initialization(mqtt_handler):
     """后台初始化任务，不阻塞主流程"""

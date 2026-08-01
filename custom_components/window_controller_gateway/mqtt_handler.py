@@ -64,6 +64,7 @@ class WindowControllerMQTTHandler:
         self.last_gateway_report_time = None  # 最后收到网关002上报的时间
         self.command_id = DEFAULT_COMMAND_ID  # 命令ID初始值
         self._check_task = None  # 后台任务引用
+        self._reconnect_task = None  # MQTT 重连任务引用（去重 + cleanup 可取消）
         self._unsub_rsp = None  # MQTT 订阅取消函数
         self._msg_lock = asyncio.Lock()  # 异步消息去重锁
         self.instance_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, hass.config.config_dir))
@@ -338,9 +339,14 @@ class WindowControllerMQTTHandler:
         except Exception as e:
             _LOGGER.error("订阅MQTT主题失败: %s", e)
             # 触发重连逻辑
-            self._schedule_async_task(
-                self._reconnect_mqtt()
-            )
+            self._schedule_reconnect()
+    
+    def _schedule_reconnect(self):
+        """调度 MQTT 重连（去重：已有重连任务在运行则跳过，避免任务无限累积）"""
+        if self._reconnect_task and not self._reconnect_task.done():
+            _LOGGER.debug("MQTT重连任务已在运行，跳过重复调度")
+            return
+        self._reconnect_task = self.hass.loop.create_task(self._reconnect_mqtt())
     
     async def _reconnect_mqtt(self):
         """MQTT重连逻辑 - 自适应重试策略，结合抖动和随机化"""
@@ -445,7 +451,13 @@ class WindowControllerMQTTHandler:
                 if not self.connected:
                     _LOGGER.debug("MQTT连接未建立，尝试重连...")
                     try:
-                        await self._reconnect_mqtt()
+                        # 统一走去重入口，避免与已在运行的重连任务并发
+                        self._schedule_reconnect()
+                        if self._reconnect_task:
+                            try:
+                                await self._reconnect_task
+                            except (asyncio.CancelledError, Exception):
+                                pass
                         if not self.connected:
                             _LOGGER.debug("MQTT重连失败，无法发送命令")
                             return False
@@ -889,6 +901,17 @@ class WindowControllerMQTTHandler:
             except Exception as e:
                 _LOGGER.debug("MQTT检查任务异常: %s", e)
             self._check_task = None
+
+        # 取消 MQTT 重连任务（若正在运行）
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                _LOGGER.debug("MQTT重连任务已取消")
+            except Exception as e:
+                _LOGGER.debug("MQTT重连任务异常: %s", e)
+            self._reconnect_task = None
         
         # 取消 MQTT 订阅
         if self._unsub_rsp:
