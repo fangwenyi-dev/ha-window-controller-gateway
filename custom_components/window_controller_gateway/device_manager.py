@@ -939,6 +939,20 @@ class WindowControllerDeviceManager:
                             _LOGGER.debug("已更新实体 %s 的配置条目关联", entity_id)
         except Exception as e:
             _LOGGER.error("更新实体关联失败: %s", e)
+
+        # 6.1 删除旧网关前缀的实体（含删除按钮 {old_gw}_remove_{sn}），
+        # 避免转移后 reload 时旧前缀与新前缀实体并存（同一设备两套实体）
+        try:
+            entity_registry = await self._get_entity_registry()
+            for entity_id, entity_entry in list(entity_registry.entities.items()):
+                if entity_entry.platform != DOMAIN or not entity_entry.unique_id:
+                    continue
+                if (entity_entry.unique_id.startswith(f"{old_gateway_sn}_{device_sn}_")
+                        or entity_entry.unique_id == f"{old_gateway_sn}_remove_{device_sn}"):
+                    entity_registry.async_remove(entity_id)
+                    _LOGGER.info("转移时删除旧前缀实体: %s", entity_id)
+        except Exception as e:
+            _LOGGER.error("删除旧前缀实体失败: %s", e)
         
         # 7. 清除冲突通知（如果有）
         try:
@@ -1339,9 +1353,14 @@ class WindowControllerDeviceManager:
         """安全的设备迁移流程（支持旧网关不在线）"""
         _LOGGER.info("开始安全迁移流程，旧网关: %s, 新网关: %s", old_gateway_sn, new_gateway_sn)
         
-        # 1. 验证新网关存在且在线
+        # 1. 验证新网关存在（迁移是零 MQTT 的本地操作：
+        #    仅修改注册表/映射/实体，不依赖网关通信）。
+        #    新网关未收到首次上报（未上线）时也允许迁移，实体在其上线后自动恢复。
         if not await self._check_gateway_online(new_gateway_sn):
-            raise Exception("新网关必须在线")
+            _LOGGER.warning(
+                "新网关 %s 当前未上报（可能未上线），仍继续执行本地迁移",
+                new_gateway_sn,
+            )
         
         # 2. 获取旧网关的设备信息（即使不在线）
         old_gateway_devices = await self._get_gateway_devices_from_registry(old_gateway_sn)

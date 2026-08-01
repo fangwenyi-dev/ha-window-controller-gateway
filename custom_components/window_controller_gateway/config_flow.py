@@ -84,8 +84,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_GATEWAY_SN] = "invalid_sn_format"
             else:
                 # Check if already configured
-                await self.async_set_unique_id(gateway_sn)
+                # unique_id 统一小写：HA 的 config entry unique_id 比较大小写敏感，
+                # 而集成其他模块均按小写比较，避免同一网关不同大小写重复添加
+                await self.async_set_unique_id(gateway_sn.lower())
                 self._abort_if_unique_id_configured()
+                # 兜底：历史 entry 的 unique_id 可能为旧版输入原样（大小写敏感），
+                # 精确匹配会漏判，此处按 data 中的网关 SN 小写遍历补一次检查
+                for entry in self.hass.config_entries.async_entries(DOMAIN):
+                    if entry.data.get(CONF_GATEWAY_SN, "").lower() == gateway_sn.lower():
+                        return self.async_abort(reason="already_configured")
 
                 # 测试网关连接性
                 try:
@@ -156,9 +163,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 gateway_name = self._pending_gateway_name
                 if not gateway_sn:
                     return self.async_abort(reason="invalid_input")
-                # 再次检查唯一性（确认期间可能已被其他流程配置）
-                await self.async_set_unique_id(gateway_sn)
+                # 再次检查唯一性（确认期间可能已被其他流程配置；unique_id 统一小写）
+                await self.async_set_unique_id(gateway_sn.lower())
                 self._abort_if_unique_id_configured()
+                # 兜底：兼容历史大小写原样的 entry unique_id
+                for entry in self.hass.config_entries.async_entries(DOMAIN):
+                    if entry.data.get(CONF_GATEWAY_SN, "").lower() == gateway_sn.lower():
+                        return self.async_abort(reason="already_configured")
                 return self.async_create_entry(
                     title=gateway_name,
                     data={
@@ -210,8 +221,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.warning("发现流程收到非法网关SN，中止: %r", gateway_sn)
             return self.async_abort(reason="invalid_sn_format")
         
-        # 检查是否已配置
-        await self.async_set_unique_id(gateway_sn)
+        # 检查是否已配置（unique_id 统一小写，避免大小写不同导致重复添加）
+        await self.async_set_unique_id(gateway_sn.lower())
         self._abort_if_unique_id_configured()
         
         # 检查是否已存在配置的网关

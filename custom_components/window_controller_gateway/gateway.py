@@ -236,22 +236,31 @@ class GatewayDeviceRemoveButton(ButtonEntity):
     
     async def async_press(self) -> None:
         """按下按键，删除设备"""
+        # MQTT 解绑为尽力而为：网关离线/broker 断开时发送会失败，
+        # 但设备删除的本地部分（注册表/映射/实体）是纯本地操作，
+        # 不应被网关在线状态阻断——即使解绑命令未发出也继续删除。
         try:
-            # 调用MQTT处理器的解绑设备方法
             await self.mqtt_handler.unbind_device(self.device_sn)
             _LOGGER.info("已发送解绑命令，设备SN: %s", self.device_sn)
-            
-            # 等待1秒，确保网关有足够时间处理解绑命令
-            await asyncio.sleep(GATEWAY_READY_DELAY)
-            
-            # 从设备管理器中删除设备
+        except Exception as e:
+            _LOGGER.warning("发送解绑命令失败（将继续本地删除设备）: %s", e)
+
+        # 等待1秒，确保网关有足够时间处理解绑命令
+        await asyncio.sleep(GATEWAY_READY_DELAY)
+
+        # 从设备管理器中删除设备（本地操作，不受网关状态影响）
+        try:
             await self.device_manager.remove_device(self.device_sn)
             _LOGGER.info("已从系统中删除设备: %s", self.device_sn)
-            
-            # 从实体注册表中删除自身（删除按钮）
+        except Exception as e:
+            _LOGGER.error("从系统中删除设备失败: %s", e)
+            return
+
+        # 从实体注册表中删除自身（删除按钮）
+        try:
             from homeassistant.helpers.entity_registry import async_get
             entity_registry = async_get(self.hass)
-            
+
             entity_id = entity_registry.async_get_entity_id("button", DOMAIN, self._attr_unique_id)
             if entity_id:
                 entity_registry.async_remove(entity_id)
@@ -259,4 +268,4 @@ class GatewayDeviceRemoveButton(ButtonEntity):
             else:
                 _LOGGER.debug("删除按钮实体未找到，可能已经被删除: %s", self._attr_unique_id)
         except Exception as e:
-            _LOGGER.error("触发设备解绑模式失败: %s", e)
+            _LOGGER.error("从实体注册表中删除删除按钮失败: %s", e)

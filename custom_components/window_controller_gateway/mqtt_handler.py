@@ -417,8 +417,9 @@ class WindowControllerMQTTHandler:
                 _LOGGER.error("命令类型不能为空")
                 return False
             
-            # 验证命令类型
-            valid_commands = ["bind_gateway", "start_pairing", "discover", "open", "close", "stop", "a", "set_position", "status", "wind_lock_tilt", "wind_lock_flat"]
+            # 验证命令类型（仅保留实际有 command_map 映射的命令；
+            # bind_gateway/discover/status 协议上由网关主动发起，HA 发了网关不响应，已移除）
+            valid_commands = ["start_pairing", "open", "close", "stop", "a", "set_position", "wind_lock_tilt", "wind_lock_flat"]
             if command not in valid_commands:
                 _LOGGER.error("未知命令类型: %s", command)
                 return False
@@ -1153,7 +1154,9 @@ class WindowControllerMQTTHandler:
         # 收到网关回复（命令不启用重发机制）
 
         errcode = data.get("errcode", -1)
-        device_sn = data.get("sn") or payload.get("sn")
+        # 只信任 data.sn（子设备 SN）；顶层 payload.sn 是网关 SN，
+        # 若网关未在 data 中回传子设备 SN，不把网关自身误当子设备添加
+        device_sn = data.get("sn")
 
         if errcode == 0 and device_sn:
             # 绑定成功，添加设备

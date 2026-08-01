@@ -200,8 +200,9 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             _LOGGER.error("设置位置服务调用失败：未指定位置")
             return
 
-        # 加强位置参数验证
-        if not isinstance(position, int) or position < 0 or position > 100:
+        # 加强位置参数验证（type() is int 排除 bool：Python 中 bool 是 int 子类，
+        # isinstance(True, int) 为 True，会导致 position: true 被静默转为位置 1）
+        if type(position) is not int or position < 0 or position > 100:
             _LOGGER.error("设置位置服务调用失败：位置必须是0-100之间的整数")
             return
 
@@ -785,11 +786,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.info("准备迁移设备，旧网关: %s, 新网关: %s, 是否移除旧网关: %s", old_gateway_sn, gateway_sn, remove_old_gateway)
             if old_gateway_sn and old_gateway_sn.lower() != gateway_sn.lower():
                 hass.async_create_task(_migrate_devices_async(hass, old_gateway_sn, gateway_sn, remove_old_gateway), name=f"{DOMAIN}_migrate_{entry.entry_id}")
-                # P0 修复 Bug #2：迁移任务调度后立即清除 migration_info，
-                # 防止迁移完成后的 async_reload 再次触发迁移，形成无限循环
-                new_data = {k: v for k, v in entry.data.items() if k != "migration_info"}
-                hass.config_entries.async_update_entry(entry, data=new_data)
-                _LOGGER.info("已清除 migration_info，防止重载时无限循环")
+                # migration_info 的清除移至 _migrate_devices_async 内执行：
+                # 这里立即 async_update_entry 会触发 add_update_listener -> async_reload，
+                # 与迁移任务（1 秒延迟）并发产生竞态（reload 清理 manager 时迁移服务可能调用失败）。
+                # 任务内清除 + await reload 完成后再执行迁移，避免竞态。
 
         _LOGGER.info("开窗器网关 [%s] 设置完成", gateway_name)
         return True
@@ -999,6 +999,25 @@ async def _migrate_devices_async(hass, old_gateway_sn, gateway_sn, remove_old_ga
     try:
         _LOGGER.info("开始异步设备迁移，旧网关: %s, 新网关: %s", old_gateway_sn, gateway_sn)
         await asyncio.sleep(RESTART_DELAY)
+
+        # 执行迁移前清除 migration_info：防止迁移执行中（服务内会 reload）
+        # 再次触发迁移形成循环。注意：async_update_entry 会经 add_update_listener
+        # 触发 async_reload（异步任务），此处不可再显式 async_reload（会与
+        # listener 的 reload 并发竞态），改为轮询等待该 entry 完成 reload。
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            if entry.data.get(CONF_GATEWAY_SN, "").lower() == gateway_sn.lower() and entry.data.get("migration_info"):
+                new_data = {k: v for k, v in entry.data.items() if k != "migration_info"}
+                hass.config_entries.async_update_entry(entry, data=new_data)
+                _LOGGER.info("已清除 migration_info，等待重载完成")
+                # 轮询等待 reload 完成（setup 完成后会写入 _setup_complete），
+                # 避免与 listener 触发的 reload 并发；最多等待 5 秒
+                for _ in range(25):
+                    await asyncio.sleep(0.2)
+                    entry_data = hass.data[DOMAIN].get(entry.entry_id, {})
+                    if entry_data.get("_setup_complete"):
+                        break
+                break
+
         _LOGGER.info("调用迁移服务...")
         await hass.services.async_call(
             DOMAIN,
