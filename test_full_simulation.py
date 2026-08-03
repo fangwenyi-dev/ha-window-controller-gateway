@@ -1545,6 +1545,14 @@ async def test_003_unbind_response(tr: TestResult):
             tr.ok("003 解绑响应 - 不回复 ACK")
         else:
             tr.fail("003 解绑ACK", f"期望0个ACK，实际{ack_count}个")
+
+        # 关键断言：解绑响应（bind=0, 带 sn）不应把已存在设备"重新添加"
+        # （历史 bug：无 bind 判断时解绑回复被误判为绑定成功导致设备复活）
+        device_count_after = len(device_manager.get_all_devices())
+        if device_count_after == 1:
+            tr.ok("003 解绑响应 - 设备未被误添加（bind=0 识别正确）")
+        else:
+            tr.fail("003 解绑误添加", f"期望设备数1，实际{device_count_after}")
     except Exception as e:
         tr.fail("003 解绑", f"抛出异常: {e}")
 

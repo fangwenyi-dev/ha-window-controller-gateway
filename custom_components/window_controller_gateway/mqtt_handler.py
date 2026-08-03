@@ -1168,45 +1168,62 @@ class WindowControllerMQTTHandler:
             self._notify_device_status_change(device_sn)
 
     async def _handle_ctype_003(self, payload, ctype, data):
-        """处理协议类型003：绑定子设备
+        """处理协议类型003：绑定/解绑子设备响应
 
         协议流程：
         - 添加设备：HA 发 003(bind=1) → 网关回复 003(errcode=0, sn=设备SN)
-        - 解绑设备：HA 发 003(bind=0) → 网关回复 003(errcode=0)
+        - 解绑设备：HA 发 003(bind=0) → 网关回复 003(errcode=0, sn=设备SN)
 
-        收到 003 回复后，errcode=0 且包含 sn 字段时添加设备（配对成功）。
-        解绑回复不包含 sn 字段，不会误触发添加逻辑。
+        注意：网关的【解绑】回复同样携带 data.sn（真实固件日志已确认，
+        如 {"ctype":"003","errcode":0,"sn":"500534380262"}），
+        因此不能仅凭 errcode==0 且有 sn 就判定为"绑定成功"——
+        否则解绑回复会被误判为绑定，把刚删除的设备重新添加（设备"复活"）。
+
+        区分绑定/解绑：
+        - data.bind == 0 → 解绑，不添加设备
+        - data.bind == 1 → 绑定，添加设备
+        - 网关未回传 data.bind 时，用"设备是否已存在"推断：
+          设备已存在 → 视为解绑（不添加）；设备不存在 → 视为绑定（添加）
         """
-        # 收到网关回复（命令不启用重发机制）
-
         errcode = data.get("errcode", -1)
         # 只信任 data.sn（子设备 SN）；顶层 payload.sn 是网关 SN，
         # 若网关未在 data 中回传子设备 SN，不把网关自身误当子设备添加
         device_sn = data.get("sn")
+        bind_value = data.get("bind", None)
 
         if errcode == 0 and device_sn:
-            # 绑定成功，添加设备
-            device_count = len(self.device_manager.get_all_devices())
-            device_number = device_count + 1
-            device_name = get_device_display_name(self.gateway_sn, device_sn, device_number)
-            # 手动配对时使用 is_manual_pairing=True，跳过手动删除列表检查
-            await self.device_manager.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER, is_manual_pairing=True)
-            # 配对成功后立即退出配对模式，UI 可以立刻从"配对中"恢复
-            # 同时取消配对超时定时器，避免超时回调冗余触发
-            if self.pairing_timeout_handle:
-                self.pairing_timeout_handle.cancel()
-                self.pairing_timeout_handle = None
-            self.pairing_active = False
-            self._notify_status_change()
-            _LOGGER.info("设备绑定成功: %s, 名称: %s", device_sn, device_name)
+            # 判断是绑定还是解绑：优先看响应中的 bind 字段；
+            # 网关未回传 bind 时，通过设备是否已存在推断
+            existing_device = self.device_manager.get_device(device_sn)
+            is_unbind = bind_value == 0 or (bind_value is None and existing_device)
+
+            if is_unbind:
+                # 解绑成功：本地删除已由删除按钮流程（remove_device）完成，
+                # 这里不需要重复处理，仅记录日志
+                _LOGGER.info("设备解绑成功: %s", device_sn)
+            else:
+                # 绑定成功，添加设备
+                device_count = len(self.device_manager.get_all_devices())
+                device_number = device_count + 1
+                device_name = get_device_display_name(self.gateway_sn, device_sn, device_number)
+                # 手动配对时使用 is_manual_pairing=True，跳过手动删除列表检查
+                await self.device_manager.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER, is_manual_pairing=True)
+                # 配对成功后立即退出配对模式，UI 可以立刻从"配对中"恢复
+                # 同时取消配对超时定时器，避免超时回调冗余触发
+                if self.pairing_timeout_handle:
+                    self.pairing_timeout_handle.cancel()
+                    self.pairing_timeout_handle = None
+                self.pairing_active = False
+                self._notify_status_change()
+                _LOGGER.info("设备绑定成功: %s, 名称: %s", device_sn, device_name)
         elif errcode == 0 and not device_sn:
-            _LOGGER.warning("设备绑定成功但未返回设备SN，无法添加设备: %s", payload)
+            _LOGGER.warning("设备操作成功但未返回设备SN: %s", payload)
         else:
             # 错误码7可能表示通讯距离不够，不记录为错误
             if errcode == 7:
-                _LOGGER.debug("设备绑定失败，错误码: %d, SN: %s (可能是通讯距离不够)", errcode, device_sn)
+                _LOGGER.debug("设备操作失败，错误码: %d, SN: %s (可能是通讯距离不够)", errcode, device_sn)
             else:
-                _LOGGER.warning("设备绑定失败，错误码: %d, SN: %s", errcode, device_sn)
+                _LOGGER.warning("设备操作失败，错误码: %d, SN: %s", errcode, device_sn)
 
     async def _handle_ctype_004(self, payload, ctype, data):
         """处理协议类型004：设备控制响应
