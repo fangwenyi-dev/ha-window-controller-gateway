@@ -57,6 +57,7 @@ def setup_mock_modules():
     ha_config_entries.ConfigEntry = MagicMock
     ha_config_entries.ConfigFlow = _MockFlowBase
     ha_config_entries.OptionsFlow = _MockFlowBase
+    ha_config_entries.SOURCE_DISCOVERY = "discovery"
 
     ha_helpers = types.ModuleType("homeassistant.helpers")
     ha_helpers_config_validation = types.ModuleType("homeassistant.helpers.config_validation")
@@ -140,6 +141,9 @@ def setup_mock_modules():
     ha_helpers_entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
     ha_helpers_entity_registry.async_get = lambda hass: MagicMock()
     sys.modules["homeassistant.helpers.entity_registry"] = ha_helpers_entity_registry
+    ha_helpers_discovery = types.ModuleType("homeassistant.helpers.discovery")
+    ha_helpers_discovery.async_load_platform = MagicMock()
+    sys.modules["homeassistant.helpers.discovery"] = ha_helpers_discovery
     sys.modules["homeassistant.components"] = ha_components
     sys.modules["homeassistant.components.mqtt"] = ha_mqtt
     sys.modules["homeassistant.components.button"] = ha_components_button
@@ -1831,6 +1835,202 @@ async def test_005_ack_id_matches(tr: TestResult):
         tr.fail("ACK消息", "未找到ACK消息")
 
 
+async def test_bind_ops_cap(tr: TestResult):
+    """测试 36: 003 命令方向记录有上限，防止网关不回复时内存膨胀"""
+    hass = MockHass()
+    hass.loop = asyncio.get_event_loop()
+    device_manager = MockDeviceManager()
+    handler = mqtt_handler_mod.WindowControllerMQTTHandler(hass, "1001ABCD1234", device_manager)
+
+    for i in range(1, const_mod.MAX_BIND_OPS + 20):
+        handler._record_bind_op(i, "bind")
+
+    if len(handler._bind_ops) <= const_mod.MAX_BIND_OPS:
+        tr.ok(f"_bind_ops 上限限制生效 ({len(handler._bind_ops)} <= {const_mod.MAX_BIND_OPS})")
+    else:
+        tr.fail("_bind_ops 上限", f"记录数{len(handler._bind_ops)}超过上限{const_mod.MAX_BIND_OPS}")
+
+    if 1 not in handler._bind_ops:
+        tr.ok("最旧 bind 记录被淘汰")
+    else:
+        tr.fail("bind 淘汰", "最旧记录未被淘汰")
+
+
+async def test_bind_op_recorded_on_commands(tr: TestResult):
+    """测试 37: 配对/解绑命令通过 _record_bind_op 记录方向"""
+    PUBLISHED_MESSAGES.clear()
+
+    hass = MockHass()
+    hass.loop = asyncio.get_event_loop()
+    device_manager = MockDeviceManager()
+    await device_manager.add_device("5005TEST0001", "测试设备", "window_opener")
+    handler = mqtt_handler_mod.WindowControllerMQTTHandler(hass, "1001ABCD1234", device_manager)
+    handler.connected = True
+
+    # 配对命令记录 bind
+    handler._bind_ops.clear()
+    await handler.send_command("1001ABCD1234", "start_pairing")
+    has_bind = any(v == "bind" for v in handler._bind_ops.values())
+    if has_bind:
+        tr.ok("配对命令记录 bind 方向")
+    else:
+        tr.fail("配对bind记录", "start_pairing 未记录 bind 方向")
+
+    # 解绑命令记录 unbind
+    handler._bind_ops.clear()
+    await handler.unbind_device("5005TEST0001")
+    has_unbind = any(v == "unbind" for v in handler._bind_ops.values())
+    if has_unbind:
+        tr.ok("解绑命令记录 unbind 方向")
+    else:
+        tr.fail("解绑unbind记录", "unbind_device 未记录 unbind 方向")
+
+
+async def test_discovery_one_time_announce(tr: TestResult):
+    """测试 38: 同一网关在一次 HA 会话内只触发一次发现通知（防通知轰炸）"""
+    from unittest.mock import patch
+
+    disc_mod = load_module(
+        "custom_components.window_controller_gateway.discovery",
+        os.path.join(COMPONENT_DIR, "discovery.py")
+    )
+
+    class _Flows:
+        def __init__(self):
+            self.inits = []
+        def async_progress(self):
+            return []
+        async def async_init(self, *args, **kwargs):
+            self.inits.append((args, kwargs))
+
+    class _ConfigEntries:
+        def __init__(self):
+            self.flow = _Flows()
+        def async_entries(self, domain):
+            return []
+
+    hass = MockHass()
+    hass.config_entries = _ConfigEntries()
+    hass.data[const_mod.DOMAIN] = {
+        "discovery": {
+            "ignored_gateways": set(),
+            "last_discovery_time": {},
+            "announced_gateways": set(),
+        }
+    }
+
+    # 关闭冷却，确保验证的是会话级去重而非冷却
+    orig_cooldown = disc_mod._DISCOVERY_COOLDOWN
+    disc_mod._DISCOVERY_COOLDOWN = 0
+
+    fake_registry = MagicMock()
+    fake_registry.async_get_device.return_value = None
+    fake_entity_registry = MagicMock()
+    fake_entity_registry.entities = {}
+
+    try:
+        with patch.object(disc_mod.dr, "async_get", return_value=fake_registry), \
+             patch.object(disc_mod.er, "async_get", return_value=fake_entity_registry):
+            # 第一次：应触发通知
+            await disc_mod.async_discover_gateway(hass, "1001NEWGW0001", "网关 0001")
+            # 第二次（网关心跳）：应被会话去重拦截
+            await disc_mod.async_discover_gateway(hass, "1001NEWGW0001", "网关 0001")
+            # 忽略后：不再触发
+            await disc_mod.async_ignore_gateway(hass, "1001NEWGW0001")
+            await disc_mod.async_discover_gateway(hass, "1001NEWGW0001", "网关 0001")
+            # 取消忽略后：重新允许通知
+            await disc_mod.async_unignore_gateway(hass, "1001NEWGW0001")
+            await disc_mod.async_discover_gateway(hass, "1001NEWGW0001", "网关 0001")
+    finally:
+        disc_mod._DISCOVERY_COOLDOWN = orig_cooldown
+
+    init_count = len(hass.config_entries.flow.inits)
+    if init_count == 2:
+        tr.ok("发现通知会话去重生效（首次1次 + 取消忽略后1次 = 2次）")
+    else:
+        tr.fail("发现通知去重", f"期望2次通知，实际{init_count}次")
+
+
+async def test_utils_resolve_ha_device_id(tr: TestResult):
+    """测试 39: 通过 HA 设备注册表 ID（UUID）解析设备/网关SN"""
+    from unittest.mock import patch
+
+    hass = MockHass()
+    hass.data[const_mod.DOMAIN] = {}
+
+    fake_entry = MagicMock()
+    fake_entry.identifiers = {(const_mod.DOMAIN, "5005UUIDDEV1")}
+    fake_registry = MagicMock()
+    fake_registry.async_get.return_value = fake_entry
+
+    with patch("homeassistant.helpers.device_registry.async_get", return_value=fake_registry):
+        sn = utils_mod._resolve_domain_identifier(hass, "some-uuid")
+
+    if sn == "5005UUIDDEV1":
+        tr.ok("HA 设备注册表ID解析为设备SN")
+    else:
+        tr.fail("设备注册表解析", f"期望 5005UUIDDEV1，实际 {sn!r}")
+
+    # 找不到时应返回 None
+    fake_registry2 = MagicMock()
+    fake_registry2.async_get.return_value = None
+    with patch("homeassistant.helpers.device_registry.async_get", return_value=fake_registry2):
+        sn_none = utils_mod._resolve_domain_identifier(hass, "missing-uuid")
+    if sn_none is None:
+        tr.ok("不存在的设备注册表ID返回 None")
+    else:
+        tr.fail("设备注册表解析None", f"期望 None，实际 {sn_none!r}")
+
+
+async def test_quick_add_device_numbering(tr: TestResult):
+    """测试 40: 自动发现设备名包含 #NN 自动编号"""
+    hass = MockHass()
+    hass.loop = asyncio.get_event_loop()
+
+    class RecordingManager(MockDeviceManager):
+        def __init__(self):
+            super().__init__()
+            self.added = []
+        async def add_device(self, device_sn, device_name, device_type=None, force=False, is_manual_pairing=False):
+            self.added.append((device_sn, device_name))
+            return await super().add_device(device_sn, device_name, device_type, force, is_manual_pairing)
+
+    dm = RecordingManager()
+    handler = mqtt_handler_mod.WindowControllerMQTTHandler(hass, "1001ABCD1234", dm)
+
+    await handler._quick_add_device("5005NUM0001", {"battery": 100, "r_travel": 0})
+
+    if dm.added and "#01" in dm.added[0][1]:
+        tr.ok(f"自动发现设备名包含编号: {dm.added[0][1]}")
+    else:
+        tr.fail("自动编号", f"名称不含 #01: {dm.added}")
+
+
+async def test_quick_add_device_numbering_second(tr: TestResult):
+    """测试 41: 自动发现第二个设备时编号递增为 #02"""
+    hass = MockHass()
+    hass.loop = asyncio.get_event_loop()
+
+    class RecordingManager(MockDeviceManager):
+        def __init__(self):
+            super().__init__()
+            self.added = []
+        async def add_device(self, device_sn, device_name, device_type=None, force=False, is_manual_pairing=False):
+            self.added.append((device_sn, device_name))
+            return await super().add_device(device_sn, device_name, device_type, force, is_manual_pairing)
+
+    dm = RecordingManager()
+    handler = mqtt_handler_mod.WindowControllerMQTTHandler(hass, "1001ABCD1234", dm)
+
+    await handler._quick_add_device("5005NUM0001", {})
+    await handler._quick_add_device("5005NUM0002", {})
+
+    if len(dm.added) == 2 and "#01" in dm.added[0][1] and "#02" in dm.added[1][1]:
+        tr.ok("自动发现编号递增 (#01 → #02)")
+    else:
+        tr.fail("编号递增", f"编号未递增: {dm.added}")
+
+
 # ============================================================
 # 主函数
 # ============================================================
@@ -1891,6 +2091,14 @@ async def run_all_tests():
     print("\n--- 回调与清理测试 ---")
     await test_callback_registration(tr)
     await test_mqtt_cleanup(tr)
+
+    print("\n--- v1.4.1 修复项测试 ---")
+    await test_bind_ops_cap(tr)
+    await test_bind_op_recorded_on_commands(tr)
+    await test_discovery_one_time_announce(tr)
+    await test_utils_resolve_ha_device_id(tr)
+    await test_quick_add_device_numbering(tr)
+    await test_quick_add_device_numbering_second(tr)
 
     print("\n--- 持久化测试 ---")
     test_persist_save_load(tr)

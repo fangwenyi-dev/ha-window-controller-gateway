@@ -41,6 +41,8 @@ class WindowControllerDeviceManager:
         self.entry = entry
         self.gateway_sn = entry.data[CONF_GATEWAY_SN]
         self.gateway_name = entry.data.get(CONF_GATEWAY_NAME, f"慧尖网关 {self.gateway_sn[-4:]}")
+        self.gateway_status = "unknown"  # 网关状态（online/offline/pairing），由 update_gateway_status 维护
+        self.gateway_attributes = {}  # 网关附加属性
         self.devices = {}
         self.gateway_device_id = None
         self._device_added_callbacks = []
@@ -288,12 +290,12 @@ class WindowControllerDeviceManager:
         return device.id
     
     async def update_gateway_status(self, status: str, attributes: dict = None):
-        """更新网关状态"""
+        """更新网关状态（记录到设备管理器，供网关实体属性展示）"""
         _LOGGER.debug("更新网关 %s 状态为: %s", self.gateway_sn, status)
-        
-        # 这里可以添加网关状态的持久化存储
-        # 目前主要依赖MQTT处理器的连接状态
-        
+        if status:
+            self.gateway_status = status
+        if attributes:
+            self.gateway_attributes.update(attributes)
         return True
     
     def get_gateway_info(self):
@@ -303,7 +305,8 @@ class WindowControllerDeviceManager:
             "name": self.gateway_name,
             "device_id": self.gateway_device_id,
             "manufacturer": MANUFACTURER,
-            "model": MODEL
+            "model": MODEL,
+            "status": self.gateway_status
         }
     
     def _format_device_name(self, device_sn: str, device_name: str) -> str:

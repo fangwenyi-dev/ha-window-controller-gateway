@@ -233,6 +233,14 @@ data:
 
 ## 版本历史
 
+### v1.4.1
+- 修复: 未配置网关的发现通知循环轰炸 — 同一网关在一次 HA 会话内只触发一次发现流程/通知（新增 `announced_gateways` 会话去重），网关周期心跳不再反复弹出"发现新网关"；删除网关后重置记录，可再次被发现
+- 修复: `set_position` 服务 `position: true` 被 `vol.Coerce(int)` 静默转为位置 1 — schema 在 Coerce 前置拒绝布尔值
+- 修复: 003 绑定/解绑命令方向记录（`_bind_ops`）无上限，网关不回复时持续增长 — 增加上限（`MAX_BIND_OPS=200`）并按序淘汰最旧记录
+- 修复: `update_gateway_status` 空实现 — 现在真实记录网关状态，配对状态通过在线传感器的 `pairing_active` / `gateway_status` 属性可见
+- 修复: `set_position` / `rename_device` 服务的 `device_id` 支持 HA 设备注册表 ID（UUID），与 `transfer_device` 行为一致
+- 优化: 自动发现设备名补充 `#NN` 自动编号，与手动配对命名格式一致
+
 ### v1.3.7
 - 功能调整: 设备迁移（migrate_devices 服务与替换网关自动迁移）暂禁用（服务注册与自动触发已注释，发现流程不再强制进入替换流程，可正常添加多网关）
 - 修复: `set_position` 服务 schema 不再用 `positive_int`（位置 0 即完全关闭会被错误拒绝）

@@ -133,7 +133,9 @@ DEVICE_SN_PREFIX_WIND_LOCK: Final = "5005"  # 支持内倒/平开模式的LoRa�
 # ==================== 其他 ====================
 MANUFACTURER: Final = "慧尖"
 MODEL: Final = "慧尖开窗器网关"
-VERSION: Final = "1.3.7"
+VERSION: Final = "1.4.1"
+# 003 绑定/解绑命令方向记录上限：网关不回复/离线时防止 _bind_ops 无限增长
+MAX_BIND_OPS: Final = 200
 ICON_GATEWAY: Final = "mdi:gateway"
 ICON_WINDOW_OPENER: Final = "mdi:window-closed"
 

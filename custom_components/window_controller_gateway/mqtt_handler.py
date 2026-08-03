@@ -46,6 +46,7 @@ from .const import (
     TOPIC_GATEWAY_REQ_FORMAT,
     TOPIC_GATEWAY_RSP,
     DEVICE_TO_GATEWAY_MAPPING,
+    MAX_BIND_OPS,
     get_device_display_name,
 )
 
@@ -87,6 +88,18 @@ class WindowControllerMQTTHandler:
         # （回复晚于本地删除时误判为绑定、设备复活），id 匹配可完全消除。
         # {command_id: "bind" / "unbind"}，收到回复即清理，不会累积。
         self._bind_ops = {}
+    
+    def _record_bind_op(self, command_id: int, direction: str) -> None:
+        """记录 003 绑定/解绑命令方向（按命令 id 匹配回复）
+
+        网关离线/不回复时记录不会被消费，因此设置上限，超出后按
+        插入顺序淘汰最旧记录（dict 保持插入顺序），防止无界增长。
+        """
+        self._bind_ops[command_id] = direction
+        if len(self._bind_ops) > MAX_BIND_OPS:
+            oldest = next(iter(self._bind_ops))
+            self._bind_ops.pop(oldest)
+            _LOGGER.debug("_bind_ops 超过上限 %d，淘汰最旧记录: %s", MAX_BIND_OPS, oldest)
     
     def _schedule_async_task(self, coro):
         """安全地将异步任务调度到主事件循环
@@ -522,7 +535,7 @@ class WindowControllerMQTTHandler:
                 # 在顶层也添加bind字段
                 payload["bind"] = 1
                 # 记录本命令方向（id 匹配回复，供 _handle_ctype_003 判定）
-                self._bind_ops[payload["id"]] = "bind"
+                self._record_bind_op(payload["id"], "bind")
             elif command in ["open", "close", "stop", "a"]:
                 # 控制命令需要包含子设备SN
                 payload["data"]["sn"] = device_sn
@@ -854,7 +867,7 @@ class WindowControllerMQTTHandler:
             self.command_id = 1
         _LOGGER.debug("解绑命令 id=%s", sent_command_id)
         # 记录本命令方向（id 匹配回复，供 _handle_ctype_003 判定）
-        self._bind_ops[payload["id"]] = "unbind"
+        self._record_bind_op(payload["id"], "unbind")
         
         # 发送MQTT消息
         try:
@@ -1138,7 +1151,9 @@ class WindowControllerMQTTHandler:
 
     async def _quick_add_device(self, device_sn, device_info):
         """快速添加设备 - 自动发现"""
-        device_name = get_device_display_name(self.gateway_sn, device_sn)
+        # 与手动配对（_handle_ctype_003）一致，按当前设备数分配 #NN 编号
+        device_number = len(self.device_manager.get_all_devices()) + 1
+        device_name = get_device_display_name(self.gateway_sn, device_sn, device_number)
         
         # 直接调用设备管理器的添加方法（自动发现，不使用手动配对标记）
         await self.device_manager.add_device(device_sn, device_name, DEVICE_TYPE_WINDOW_OPENER)

@@ -85,6 +85,14 @@ class GatewayOnlineSensor(BinarySensorEntity):
         # 从MQTT处理器获取连接状态
         self._attr_is_on = self.mqtt_handler.connected
         _LOGGER.debug("网关 %s 在线状态更新为: %s", self.gateway_sn, self._attr_is_on)
+
+    @property
+    def extra_state_attributes(self):
+        """暴露网关配对状态与最近网关状态，供用户查看（不改变按钮可用性）"""
+        return {
+            "pairing_active": bool(getattr(self.mqtt_handler, "pairing_active", False)),
+            "gateway_status": getattr(self.device_manager, "gateway_status", "unknown"),
+        }
     
     def _on_status_change(self):
         """当MQTT状态改变时调用"""

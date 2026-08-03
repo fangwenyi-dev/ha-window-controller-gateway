@@ -49,6 +49,17 @@ DISCOVERY_PLATFORM = "window_controller_gateway"
 # 因此用引用计数：任一 entry 开启则 DEBUG，全部关闭/卸载后恢复 NOTSET（继承 HA logger 配置）。
 _debug_logging_entries: set = set()
 
+
+def _reject_bool_position(value):
+    """拒绝布尔位置参数
+
+    Python 中 bool 是 int 子类，`vol.Coerce(int)` 会把 True 静默转为 1，
+    必须在 Coerce 之前显式拒绝，避免 `position: true` 被当作位置 1 下发。
+    """
+    if type(value) is bool:
+        raise vol.Invalid("position 不能是布尔值")
+    return value
+
 async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
     """设置集成 - Home Assistant调用此函数加载集成"""
     _LOGGER.info("=== 开窗器网关集成初始化 ===")
@@ -575,7 +586,11 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
             handle_set_position,
             schema=vol.Schema({
                 vol.Required("device_id"): cv.string,
-                vol.Required("position"): vol.All(vol.Coerce(int), vol.Range(min=POSITION_MIN, max=POSITION_MAX)),
+                vol.Required("position"): vol.All(
+                    _reject_bool_position,
+                    vol.Coerce(int),
+                    vol.Range(min=POSITION_MIN, max=POSITION_MAX),
+                ),
             })
         )
 
@@ -931,6 +946,17 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """删除配置条目"""
     gateway_sn = entry.data.get(CONF_GATEWAY_SN, "unknown")
     _LOGGER.info("从配置中永久移除开窗器网关: %s", gateway_sn)
+    
+    # 重置该网关的发现去重/忽略记录，使删除后的网关可被再次自动发现。
+    # 否则 announced_gateways 中残留的"已通知"记录会永久屏蔽该网关。
+    try:
+        discovery = hass.data[DOMAIN].get("discovery", {})
+        gateway_key = gateway_sn.lower()
+        discovery.setdefault("announced_gateways", set()).discard(gateway_key)
+        discovery.setdefault("ignored_gateways", set()).discard(gateway_key)
+        discovery.setdefault("last_discovery_time", {}).pop(gateway_key, None)
+    except Exception as e:
+        _LOGGER.debug("重置网关 %s 的发现记录失败（可忽略）: %s", gateway_sn, e)
     
     # 保存当前的持久化数据
     await save_persistent_data(hass)
