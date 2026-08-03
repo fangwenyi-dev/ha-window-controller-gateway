@@ -1553,6 +1553,34 @@ async def test_003_unbind_response(tr: TestResult):
             tr.ok("003 解绑响应 - 设备未被误添加（bind=0 识别正确）")
         else:
             tr.fail("003 解绑误添加", f"期望设备数1，实际{device_count_after}")
+
+        # 关键场景：解绑回复【晚于】本地删除（设备已不在 device_manager），
+        # 且固件回复不带 data.bind——仅靠"设备已存在"推断会误判为绑定。
+        # 发送端已记录 _bind_ops[id]="unbind"，按 id 匹配应判解绑、不添加。
+        handler._bind_ops[17001] = "unbind"
+        msg_late = make_msg("003", 17001, "1001ABCD1234", {
+            "errcode": 0,
+            "sn": "5005BIND00002",  # 该设备从未添加（模拟已删除）
+        })
+        await handler._handle_ctype_003(msg_late, "003", msg_late["data"])
+        device_count_late = len(device_manager.get_all_devices())
+        if device_count_late == 1:
+            tr.ok("003 迟到解绑回复 - 设备未被误添加（id 匹配）")
+        else:
+            tr.fail("003 迟到解绑", f"期望设备数1，实际{device_count_late}")
+
+        # 反向场景：配对命令方向已记录 bind=1，回复到达时设备不存在 → 应添加
+        handler._bind_ops[17002] = "bind"
+        msg_bind = make_msg("003", 17002, "1001ABCD1234", {
+            "errcode": 0,
+            "sn": "5005BIND00003",
+        })
+        await handler._handle_ctype_003(msg_bind, "003", msg_bind["data"])
+        device_count_bind = len(device_manager.get_all_devices())
+        if device_count_bind == 2:
+            tr.ok("003 配对回复 - 新设备被正确添加（id 匹配 bind=1）")
+        else:
+            tr.fail("003 配对添加", f"期望设备数2，实际{device_count_bind}")
     except Exception as e:
         tr.fail("003 解绑", f"抛出异常: {e}")
 

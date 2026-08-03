@@ -82,6 +82,11 @@ class WindowControllerMQTTHandler:
         # 消息去重 - 记录最近处理的消息ID，避免重复处理
         self._processed_messages = {}  # {message_id: timestamp}
         self._message_dedup_duration = 5  # 5秒内相同ID的消息认为是重复
+        # 记录最近发出的 003 绑定/解绑命令方向（按命令 id 匹配回复）。
+        # 固件解绑回复不带 data.bind，仅凭"设备是否已存在"推断存在竞态窗口
+        # （回复晚于本地删除时误判为绑定、设备复活），id 匹配可完全消除。
+        # {command_id: "bind" / "unbind"}，收到回复即清理，不会累积。
+        self._bind_ops = {}
     
     def _schedule_async_task(self, coro):
         """安全地将异步任务调度到主事件循环
@@ -516,6 +521,8 @@ class WindowControllerMQTTHandler:
                 }
                 # 在顶层也添加bind字段
                 payload["bind"] = 1
+                # 记录本命令方向（id 匹配回复，供 _handle_ctype_003 判定）
+                self._bind_ops[payload["id"]] = "bind"
             elif command in ["open", "close", "stop", "a"]:
                 # 控制命令需要包含子设备SN
                 payload["data"]["sn"] = device_sn
@@ -846,6 +853,8 @@ class WindowControllerMQTTHandler:
         if self.command_id > MAX_COMMAND_ID:
             self.command_id = 1
         _LOGGER.debug("解绑命令 id=%s", sent_command_id)
+        # 记录本命令方向（id 匹配回复，供 _handle_ctype_003 判定）
+        self._bind_ops[payload["id"]] = "unbind"
         
         # 发送MQTT消息
         try:
@@ -893,6 +902,8 @@ class WindowControllerMQTTHandler:
             except Exception as e:
                 _LOGGER.debug("取消配对超时句柄异常: %s", e)
         self.pairing_timeout_handle = None
+        # 清理 003 绑定/解绑方向记录
+        self._bind_ops.clear()
 
         # 取消后台任务
         if self._check_task:
@@ -1190,12 +1201,21 @@ class WindowControllerMQTTHandler:
         # 若网关未在 data 中回传子设备 SN，不把网关自身误当子设备添加
         device_sn = data.get("sn")
         bind_value = data.get("bind", None)
+        # 按命令 id 匹配最近发出的 003 方向（发送端已记录 _bind_ops）
+        bind_op = self._bind_ops.pop(payload.get("id"), None)
 
         if errcode == 0 and device_sn:
-            # 判断是绑定还是解绑：优先看响应中的 bind 字段；
-            # 网关未回传 bind 时，通过设备是否已存在推断
+            # 判断是绑定还是解绑（优先级从高到低）：
+            # 1. id 匹配发送端记录的命令方向（最可靠，不受设备存在性/时序影响）
+            # 2. data.bind 字段（固件回复若带）
+            # 3. 设备是否已存在（兜底：网关主动发起/命令未记录）
             existing_device = self.device_manager.get_device(device_sn)
-            is_unbind = bind_value == 0 or (bind_value is None and existing_device)
+            if bind_op == "unbind" or bind_value == 0:
+                is_unbind = True
+            elif bind_op == "bind" or bind_value == 1:
+                is_unbind = False
+            else:
+                is_unbind = existing_device is not None
 
             if is_unbind:
                 # 解绑成功：本地删除已由删除按钮流程（remove_device）完成，
