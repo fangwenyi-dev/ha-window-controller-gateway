@@ -835,7 +835,10 @@ class WindowControllerMQTTHandler:
                 "devtype": device_type,
                 "sn": device_sn
             },
-            "sn": self.gateway_sn
+            "sn": self.gateway_sn,
+            # 顶层 bind 字段与配对（start_pairing 顶层 bind=1）保持一致，
+            # 固件按顶层 bind 识别绑定/解绑命令
+            "bind": 0
         }
         sent_command_id = self.command_id
         # 递增ID（命令 id 仍随消息发送，仅不再注册重发）
