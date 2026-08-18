@@ -44,6 +44,7 @@ DEVICE_TYPE_GATEWAY: Final = "gateway"
 MAX_DEVICES_PER_GATEWAY: Final = 32
 DEVICE_TO_GATEWAY_MAPPING: Final = "device_to_gateway_mapping"
 GLOBAL_MANUALLY_REMOVED_DEVICES: Final = "global_manually_removed_devices"
+DEVICE_SETPOINTS: Final = "device_setpoints"  # 设备参数设定值（速度/力度等），持久化，重启不丢失
 
 # ==================== MQTT 相关 ====================
 DEFAULT_COMMAND_ID: Final = 1
@@ -64,6 +65,10 @@ COMMAND_VALUE_STOP: Final = "101"
 COMMAND_VALUE_TOGGLE: Final = "200"
 ATTRIBUTE_W_TRAVEL: Final = "w_travel"
 ATTRIBUTE_WIND_LOCK_MODE: Final = "rwp_wind_lock_mode"
+ATTRIBUTE_WINACT_SPEED: Final = "rwp_winact_speed"  # 开窗速度（0-100）
+ATTRIBUTE_WINACT_STRENGTH: Final = "rwp_winact_strength"  # 开窗力度（0-100）
+SPEED_MIN: Final = 0  # rwp_winact_* 系列参数共用范围下限（速度/力度）
+SPEED_MAX: Final = 100  # rwp_winact_* 系列参数共用范围上限（速度/力度）
 COMMAND_VALUE_WIND_LOCK_TILT: Final = "0"   # 内倒模式
 COMMAND_VALUE_WIND_LOCK_FLAT: Final = "1"    # 平开模式
 
@@ -112,6 +117,8 @@ COMMAND_STATUS: Final = "status"
 COMMAND_START_PAIRING: Final = "start_pairing"
 COMMAND_WIND_LOCK_TILT: Final = "wind_lock_tilt"   # 内倒模式
 COMMAND_WIND_LOCK_FLAT: Final = "wind_lock_flat"    # 平开模式
+COMMAND_SET_SPEED: Final = "set_speed"              # 开窗速度（rwp_winact_speed）
+COMMAND_SET_STRENGTH: Final = "set_strength"        # 开窗力度（rwp_winact_strength）
 
 # ==================== 实体相关 ====================
 ENTITY_GATEWAY_PREFIX: Final = "gateway_"
@@ -133,7 +140,7 @@ DEVICE_SN_PREFIX_WIND_LOCK: Final = "5005"  # 支持内倒/平开模式的LoRa�
 # ==================== 其他 ====================
 MANUFACTURER: Final = "慧尖"
 MODEL: Final = "慧尖开窗器网关"
-VERSION: Final = "1.4.1"
+VERSION: Final = "1.4.3"
 # 003 绑定/解绑命令方向记录上限：网关不回复/离线时防止 _bind_ops 无限增长
 MAX_BIND_OPS: Final = 200
 ICON_GATEWAY: Final = "mdi:gateway"

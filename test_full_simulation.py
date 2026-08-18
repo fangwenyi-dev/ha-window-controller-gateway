@@ -115,6 +115,36 @@ def setup_mock_modules():
     ha_components_sensor.SensorDeviceClass.ENUM = "enum"
     ha_components_binary_sensor = types.ModuleType("homeassistant.components.binary_sensor")
     ha_components_binary_sensor.BinarySensorEntity = MagicMock
+    # Number 基类必须用真实类：MagicMock 作基类会让 Mock.__setattr__ 劫持
+    # 实例属性赋值（self.hass = ... 抛 _mock_methods），无法实例化实体。
+    class _FakeNumberEntity:
+        """模拟 HA NumberEntity 的最小基类"""
+        _attr_native_min_value: float = 0.0
+        _attr_native_max_value: float = 100.0
+        _attr_native_step: float = 1.0
+        _attr_native_unit_of_measurement: str = None
+        _attr_native_value: float = None
+        _attr_mode = None
+        _attr_entity_category = None
+        _attr_available = True
+        _attr_unique_id: str = None
+        _attr_icon: str = None
+        _attr_name: str = None
+        def __init__(self, *args, **kwargs):
+            pass
+        def async_write_ha_state(self):
+            """模拟 HA 实体写状态（真实实现由 HA Entity 提供）"""
+            pass
+
+    class _FakeNumberMode:
+        SLIDER = "slider"
+        BOX = "box"
+        AUTO = "auto"
+
+    ha_components_number = types.ModuleType("homeassistant.components.number")
+    ha_components_number.NumberEntity = _FakeNumberEntity
+    ha_components_number.NumberMode = _FakeNumberMode
+    ha_components_number.NumberDeviceClass = types.SimpleNamespace(VOLTAGE="voltage")
 
     ha_data_entry_flow = types.ModuleType("homeassistant.data_entry_flow")
     ha_data_entry_flow.FlowResult = dict
@@ -150,6 +180,7 @@ def setup_mock_modules():
     sys.modules["homeassistant.components.cover"] = ha_components_cover
     sys.modules["homeassistant.components.sensor"] = ha_components_sensor
     sys.modules["homeassistant.components.binary_sensor"] = ha_components_binary_sensor
+    sys.modules["homeassistant.components.number"] = ha_components_number
     sys.modules["homeassistant.data_entry_flow"] = ha_data_entry_flow
     sys.modules["voluptuous"] = vol
 
@@ -284,6 +315,12 @@ class MockDeviceManager:
     def is_device_manually_removed(self, device_sn):
         return device_sn in self._manually_removed_devices
 
+    def set_device_added_callback(self, callback):
+        pass
+
+    def set_device_removed_callback(self, callback):
+        pass
+
     def get_gateway_info(self):
         return {"name": "Test Gateway", "sn": self.gateway_sn}
 
@@ -328,6 +365,10 @@ class MockHass:
                     asyncio.ensure_future(result, loop=self.loop)
         except Exception:
             pass
+
+    async def async_add_executor_job(self, target, *args):
+        """模拟 HA 的 executor 作业（同步执行）"""
+        return target(*args)
 
 
 def make_msg(ctype: str, msg_id: int, sn: str, data: dict = None) -> dict:
@@ -2031,6 +2072,414 @@ async def test_quick_add_device_numbering_second(tr: TestResult):
         tr.fail("编号递增", f"编号未递增: {dm.added}")
 
 
+async def test_set_speed_command(tr: TestResult):
+    """测试 42: set_speed（rwp_winact_speed）命令 payload 验证"""
+    PUBLISHED_MESSAGES.clear()
+
+    hass = MockHass()
+    hass.loop = asyncio.get_event_loop()
+    device_manager = MockDeviceManager()
+    await device_manager.add_device("5005TEST0001", "测试设备", "window_opener")
+
+    handler = mqtt_handler_mod.WindowControllerMQTTHandler(hass, "1001ABCD1234", device_manager)
+    handler.connected = True
+
+    # 正常速度
+    result = await handler.send_command("5005TEST0001", "set_speed", {"speed": 40})
+    if result:
+        tr.ok("set_speed 命令发送成功")
+    else:
+        tr.fail("set_speed", "发送失败")
+
+    cmd_msg = next((m for m in PUBLISHED_MESSAGES if m["ctype"] == "004"), None)
+    if cmd_msg:
+        if cmd_msg["data"].get("attribute") == "rwp_winact_speed":
+            tr.ok("set_speed attribute=rwp_winact_speed")
+        else:
+            tr.fail("set_speed attr", f"attribute应为rwp_winact_speed，实际: {cmd_msg['data'].get('attribute')}")
+        if cmd_msg["data"].get("value") == "40":
+            tr.ok("set_speed value=40")
+        else:
+            tr.fail("set_speed value", f"value应为'40'，实际: {cmd_msg['data'].get('value')}")
+        if cmd_msg["data"].get("sn") == "5005TEST0001":
+            tr.ok("set_speed 包含设备SN")
+        else:
+            tr.fail("set_speed sn", f"设备SN不正确: {cmd_msg['data'].get('sn')}")
+    else:
+        tr.fail("set_speed 命令", "未找到004类型的命令消息")
+
+    # 超范围裁剪为 100
+    PUBLISHED_MESSAGES.clear()
+    await handler.send_command("5005TEST0001", "set_speed", {"speed": 150})
+    cmd_msg2 = next((m for m in PUBLISHED_MESSAGES if m["ctype"] == "004"), None)
+    if cmd_msg2 and cmd_msg2["data"].get("value") == "100":
+        tr.ok("set_speed 超范围(150) 正确裁剪为100")
+    else:
+        tr.fail("set_speed 超范围", f"value应为'100'，实际: {cmd_msg2['data'].get('value') if cmd_msg2 else 'None'}")
+
+    # 非法值回退 0
+    PUBLISHED_MESSAGES.clear()
+    await handler.send_command("5005TEST0001", "set_speed", {"speed": "abc"})
+    cmd_msg3 = next((m for m in PUBLISHED_MESSAGES if m["ctype"] == "004"), None)
+    if cmd_msg3 and cmd_msg3["data"].get("value") == "0":
+        tr.ok("set_speed 非法值回退为0")
+    else:
+        tr.fail("set_speed 非法值", f"value应为'0'，实际: {cmd_msg3['data'].get('value') if cmd_msg3 else 'None'}")
+
+
+async def test_set_strength_command(tr: TestResult):
+    """测试 45: set_strength（rwp_winact_strength）命令 payload 验证"""
+    PUBLISHED_MESSAGES.clear()
+
+    hass = MockHass()
+    hass.loop = asyncio.get_event_loop()
+    device_manager = MockDeviceManager()
+    await device_manager.add_device("5005TEST0001", "测试设备", "window_opener")
+
+    handler = mqtt_handler_mod.WindowControllerMQTTHandler(hass, "1001ABCD1234", device_manager)
+    handler.connected = True
+
+    # 正常力度
+    result = await handler.send_command("5005TEST0001", "set_strength", {"strength": 85})
+    if result:
+        tr.ok("set_strength 命令发送成功")
+    else:
+        tr.fail("set_strength", "发送失败")
+
+    cmd_msg = next((m for m in PUBLISHED_MESSAGES if m["ctype"] == "004"), None)
+    if cmd_msg:
+        if cmd_msg["data"].get("attribute") == "rwp_winact_strength":
+            tr.ok("set_strength attribute=rwp_winact_strength")
+        else:
+            tr.fail("set_strength attr", f"attribute应为rwp_winact_strength，实际: {cmd_msg['data'].get('attribute')}")
+        if cmd_msg["data"].get("value") == "85":
+            tr.ok("set_strength value=85")
+        else:
+            tr.fail("set_strength value", f"value应为'85'，实际: {cmd_msg['data'].get('value')}")
+        if cmd_msg["data"].get("sn") == "5005TEST0001":
+            tr.ok("set_strength 包含设备SN")
+        else:
+            tr.fail("set_strength sn", f"设备SN不正确: {cmd_msg['data'].get('sn')}")
+    else:
+        tr.fail("set_strength 命令", "未找到004类型的命令消息")
+
+    # 超范围裁剪为 100
+    PUBLISHED_MESSAGES.clear()
+    await handler.send_command("5005TEST0001", "set_strength", {"strength": 150})
+    cmd_msg2 = next((m for m in PUBLISHED_MESSAGES if m["ctype"] == "004"), None)
+    if cmd_msg2 and cmd_msg2["data"].get("value") == "100":
+        tr.ok("set_strength 超范围(150) 正确裁剪为100")
+    else:
+        tr.fail("set_strength 超范围", f"value应为'100'，实际: {cmd_msg2['data'].get('value') if cmd_msg2 else 'None'}")
+
+    # 非法值回退 0
+    PUBLISHED_MESSAGES.clear()
+    await handler.send_command("5005TEST0001", "set_strength", {"strength": "abc"})
+    cmd_msg3 = next((m for m in PUBLISHED_MESSAGES if m["ctype"] == "004"), None)
+    if cmd_msg3 and cmd_msg3["data"].get("value") == "0":
+        tr.ok("set_strength 非法值回退为0")
+    else:
+        tr.fail("set_strength 非法值", f"value应为'0'，实际: {cmd_msg3['data'].get('value') if cmd_msg3 else 'None'}")
+
+
+async def test_005_winact_speed_parsing(tr: TestResult):
+    """测试 43: 005 上报 rwp_winact_speed 属性解析"""
+    PUBLISHED_MESSAGES.clear()
+
+    hass = MockHass()
+    hass.loop = asyncio.get_event_loop()
+    device_manager = MockDeviceManager()
+    await device_manager.add_device("5005TEST0001", "测试设备", "window_opener")
+
+    handler = mqtt_handler_mod.WindowControllerMQTTHandler(hass, "1001ABCD1234", device_manager)
+
+    msg = make_msg("005", 19001, "1001ABCD1234", {
+        "sn": "5005TEST0001",
+        "attrs": [{"attribute": "rwp_winact_speed", "value": "40"}]
+    })
+    try:
+        await handler._handle_ctype_005(msg, "005", msg["data"])
+        device = device_manager.get_device("5005TEST0001")
+        speed = device.get("attributes", {}).get("winact_speed") if device else None
+        if speed == 40:
+            tr.ok("005 rwp_winact_speed 正确解析为 40")
+        else:
+            tr.fail("005 speed解析", f"期望40，实际: {speed}")
+    except Exception as e:
+        tr.fail("005 speed解析", f"抛出异常: {e}")
+
+    # 非法值不崩溃
+    msg_bad = make_msg("005", 19002, "1001ABCD1234", {
+        "sn": "5005TEST0001",
+        "attrs": [{"attribute": "rwp_winact_speed", "value": "abc"}]
+    })
+    try:
+        await handler._handle_ctype_005(msg_bad, "005", msg_bad["data"])
+        tr.ok("005 rwp_winact_speed 非法值不崩溃")
+    except Exception as e:
+        tr.fail("005 speed非法值", f"抛出异常: {e}")
+
+
+async def test_005_winact_strength_parsing(tr: TestResult):
+    """测试 46: 005 上报 rwp_winact_strength 属性解析"""
+    PUBLISHED_MESSAGES.clear()
+
+    hass = MockHass()
+    hass.loop = asyncio.get_event_loop()
+    device_manager = MockDeviceManager()
+    await device_manager.add_device("5005TEST0001", "测试设备", "window_opener")
+
+    handler = mqtt_handler_mod.WindowControllerMQTTHandler(hass, "1001ABCD1234", device_manager)
+
+    msg = make_msg("005", 20001, "1001ABCD1234", {
+        "sn": "5005TEST0001",
+        "attrs": [{"attribute": "rwp_winact_strength", "value": "85"}]
+    })
+    try:
+        await handler._handle_ctype_005(msg, "005", msg["data"])
+        device = device_manager.get_device("5005TEST0001")
+        strength = device.get("attributes", {}).get("winact_strength") if device else None
+        if strength == 85:
+            tr.ok("005 rwp_winact_strength 正确解析为 85")
+        else:
+            tr.fail("005 strength解析", f"期望85，实际: {strength}")
+    except Exception as e:
+        tr.fail("005 strength解析", f"抛出异常: {e}")
+
+
+async def test_number_module_loads(tr: TestResult):
+    """测试 44: number.py 速度平台可加载且实体可实例化"""
+    try:
+        # 先加载 base_entity 子模块（其依赖 utils/const 已在 sys.modules），
+        # 避免 number.py 的相对导入触发父包 __init__.py 的磁盘导入
+        load_module(
+            "custom_components.window_controller_gateway.base_entity",
+            os.path.join(COMPONENT_DIR, "base_entity.py")
+        )
+        number_mod = load_module(
+            "custom_components.window_controller_gateway.number",
+            os.path.join(COMPONENT_DIR, "number.py")
+        )
+        tr.ok("number.py 模块加载成功")
+
+        hass = MockHass()
+        hass.loop = asyncio.get_event_loop()
+        device_manager = MockDeviceManager()
+        await device_manager.add_device("5005TEST0001", "测试设备", "window_opener")
+        handler = mqtt_handler_mod.WindowControllerMQTTHandler(hass, "1001ABCD1234", device_manager)
+
+        entity = number_mod.WindowControllerSpeedNumber(
+            hass, device_manager, handler, "1001ABCD1234", "5005TEST0001", "测试设备"
+        )
+        tr.ok("速度实体实例化成功")
+
+        if entity._attr_unique_id == "1001ABCD1234_5005TEST0001_speed":
+            tr.ok("速度实体 unique_id 正确")
+        else:
+            tr.fail("速度 unique_id", f"期望 1001ABCD1234_5005TEST0001_speed，实际 {entity._attr_unique_id}")
+
+        if entity._attr_native_min_value == 0 and entity._attr_native_max_value == 100:
+            tr.ok("速度实体范围 0-100")
+        else:
+            tr.fail("速度范围", f"min={entity._attr_native_min_value}, max={entity._attr_native_max_value}")
+
+        if entity._attr_native_step == 1:
+            tr.ok("速度实体步进为 1")
+        else:
+            tr.fail("速度步进", f"step={entity._attr_native_step}")
+
+        # 未设置过：无状态（不显示 0）
+        if entity._attr_native_value is None:
+            tr.ok("未设置前无状态（不显示0）")
+        else:
+            tr.fail("未设置状态", f"期望 None，实际 {entity._attr_native_value}")
+
+        # 设置速度：本地记录设定值并立即回显
+        with patch.object(persist_mod, "save_persistent_data", new=AsyncMock()):
+            await entity.async_set_native_value(60)
+        await asyncio.sleep(0.01)  # 让持久化任务跑完
+        if entity._attr_native_value == 60:
+            tr.ok("设置后实体立即回显 60")
+        else:
+            tr.fail("设置回显", f"期望60，实际 {entity._attr_native_value}")
+        setpoints = hass.data[const_mod.DOMAIN].get(const_mod.DEVICE_SETPOINTS, {})
+        if setpoints.get("5005TEST0001", {}).get("speed") == 60:
+            tr.ok("速度设定值已本地记录 (speed=60)")
+        else:
+            tr.fail("速度设定值记录", f"setpoints={setpoints}")
+
+        # 重新创建实体（模拟重新进入界面/平台重载），应回显上次设定值
+        entity2 = number_mod.WindowControllerSpeedNumber(
+            hass, device_manager, handler, "1001ABCD1234", "5005TEST0001", "测试设备"
+        )
+        if entity2._attr_native_value == 60:
+            tr.ok("重新创建速度实体回显上次设定值 60")
+        else:
+            tr.fail("速度重载回显", f"期望60，实际 {entity2._attr_native_value}")
+
+        # 力度实体：与速度同类型（滑动条、0-100），unique_id/命令/属性各自独立
+        strength_entity = number_mod.WindowControllerStrengthNumber(
+            hass, device_manager, handler, "1001ABCD1234", "5005TEST0001", "测试设备"
+        )
+        tr.ok("力度实体实例化成功")
+
+        if strength_entity._attr_unique_id == "1001ABCD1234_5005TEST0001_strength":
+            tr.ok("力度实体 unique_id 正确")
+        else:
+            tr.fail("力度 unique_id", f"期望 1001ABCD1234_5005TEST0001_strength，实际 {strength_entity._attr_unique_id}")
+
+        if (strength_entity._attr_native_min_value == 0
+                and strength_entity._attr_native_max_value == 100
+                and strength_entity._attr_mode == "slider"):
+            tr.ok("力度实体与速度同类型（0-100 滑动条）")
+        else:
+            tr.fail("力度类型", f"min={strength_entity._attr_native_min_value}, max={strength_entity._attr_native_max_value}, mode={strength_entity._attr_mode}")
+
+        if strength_entity._command == "set_strength" and strength_entity._param_key == "strength":
+            tr.ok("力度实体命令/参数独立 (set_strength/strength)")
+        else:
+            tr.fail("力度命令", f"command={strength_entity._command}, param={strength_entity._param_key}")
+
+        # 力度设定值独立存储与回显
+        with patch.object(persist_mod, "save_persistent_data", new=AsyncMock()):
+            await strength_entity.async_set_native_value(85)
+        await asyncio.sleep(0.01)
+        setpoints = hass.data[const_mod.DOMAIN].get(const_mod.DEVICE_SETPOINTS, {})
+        if setpoints.get("5005TEST0001", {}).get("strength") == 85:
+            tr.ok("力度设定值已本地记录 (strength=85)")
+        else:
+            tr.fail("力度设定值记录", f"setpoints={setpoints}")
+        strength_entity2 = number_mod.WindowControllerStrengthNumber(
+            hass, device_manager, handler, "1001ABCD1234", "5005TEST0001", "测试设备"
+        )
+        if strength_entity2._attr_native_value == 85:
+            tr.ok("重新创建力度实体回显上次设定值 85")
+        else:
+            tr.fail("力度重载回显", f"期望85，实际 {strength_entity2._attr_native_value}")
+    except Exception as e:
+        tr.fail("number模块加载", f"加载或实例化失败: {e}")
+
+
+async def test_number_all_sn_prefixes(tr: TestResult):
+    """测试 47: 速度/力度实体对所有 SN 前缀设备创建（不限于 5005）"""
+    try:
+        # 确保模块已加载（幂等）
+        load_module(
+            "custom_components.window_controller_gateway.base_entity",
+            os.path.join(COMPONENT_DIR, "base_entity.py")
+        )
+        number_mod = load_module(
+            "custom_components.window_controller_gateway.number",
+            os.path.join(COMPONENT_DIR, "number.py")
+        )
+    except Exception as e:
+        tr.fail("number模块加载", f"加载失败: {e}")
+        return
+
+    hass = MockHass()
+    hass.loop = asyncio.get_event_loop()
+
+    class _Entry:
+        def __init__(self):
+            self.entry_id = "entry1"
+            self.data = {const_mod.CONF_GATEWAY_SN: "1001ABCD1234"}
+
+    entry = _Entry()
+    hass.data[const_mod.DOMAIN] = {
+        entry.entry_id: {"device_manager": None, "mqtt_handler": None}
+    }
+
+    dm = MockDeviceManager()
+    # 覆盖多种 SN 前缀：5001/5002（不支持风锁模式）与 5005（支持风锁模式）
+    for sn in ["5001DEVICE001", "5002DEVICE002", "5005DEVICE003"]:
+        await dm.add_device(sn, f"设备{sn[-4:]}", "window_opener")
+
+    handler = mqtt_handler_mod.WindowControllerMQTTHandler(hass, "1001ABCD1234", dm)
+    hass.data[const_mod.DOMAIN][entry.entry_id] = {
+        "device_manager": dm, "mqtt_handler": handler
+    }
+
+    added = []
+    def async_add_entities(entities):
+        """HA 的 async_add_entities 是同步回调"""
+        added.extend(entities)
+
+    await number_mod.async_setup_entry(hass, entry, async_add_entities)
+
+    if len(added) == 6:
+        tr.ok("3 个设备各创建 2 个滑动条实体（共6个）")
+    else:
+        tr.fail("实体数量", f"期望6，实际 {len(added)}")
+
+    uids = [e._attr_unique_id for e in added]
+    for sn in ["5001DEVICE001", "5002DEVICE002", "5005DEVICE003"]:
+        if f"1001ABCD1234_{sn}_speed" in uids and f"1001ABCD1234_{sn}_strength" in uids:
+            tr.ok(f"{sn[:4]} 前缀设备同时创建 速度+力度 实体")
+        else:
+            tr.fail(f"{sn[:4]} 实体", f"缺 speed/strength 实体: {[u for u in uids if sn in u]}")
+
+
+async def test_persist_setpoints_roundtrip(tr: TestResult):
+    """测试 48: device_setpoints 持久化保存/加载往返（重启后设定值不丢）"""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        hass = MockHass()
+        hass.loop = asyncio.get_event_loop()
+        hass.config.config_dir = temp_dir
+        hass.data[const_mod.DOMAIN] = {
+            const_mod.DEVICE_TO_GATEWAY_MAPPING: {"5005TEST0001": "1001ABCD1234"},
+            const_mod.GLOBAL_MANUALLY_REMOVED_DEVICES: set(),
+            const_mod.DEVICE_SETPOINTS: {"5005TEST0001": {"speed": 60, "strength": 85}},
+        }
+        await persist_mod.save_persistent_data(hass)
+
+        data_file = os.path.join(temp_dir, persist_mod.PERSISTENT_DATA_FILE)
+        if not os.path.exists(data_file):
+            tr.fail("持久化文件", "文件未写入")
+            return
+        tr.ok("持久化文件已写入")
+
+        # 模拟重启：全新 hass 实例重新加载
+        hass2 = MockHass()
+        hass2.loop = asyncio.get_event_loop()
+        hass2.config.config_dir = temp_dir
+        hass2.data[const_mod.DOMAIN] = {}
+        await persist_mod.load_persistent_data(hass2)
+
+        sp = hass2.data[const_mod.DOMAIN].get(const_mod.DEVICE_SETPOINTS, {})
+        if (sp.get("5005TEST0001", {}).get("speed") == 60
+                and sp.get("5005TEST0001", {}).get("strength") == 85):
+            tr.ok("device_setpoints 加载往返一致 (speed=60, strength=85)")
+        else:
+            tr.fail("setpoints往返", f"加载结果: {sp}")
+
+        # 旧版文件（无 device_setpoints 字段）加载不报错且初始化为空表
+        import json as _json
+        old_file = os.path.join(temp_dir, "old_" + persist_mod.PERSISTENT_DATA_FILE)
+        with open(old_file, 'w', encoding='utf-8') as f:
+            _json.dump({
+                'schema_version': 1,
+                'device_to_gateway_mapping': {"5005TEST0001": "1001ABCD1234"},
+                'manually_removed_devices': []
+            }, f)
+        hass3 = MockHass()
+        hass3.loop = asyncio.get_event_loop()
+        hass3.config.config_dir = temp_dir
+        hass3.data[const_mod.DOMAIN] = {}
+        # 指向旧文件后验证 load 对缺失字段的容错
+        persist_mod.PERSISTENT_DATA_FILE = "old_" + persist_mod.PERSISTENT_DATA_FILE
+        try:
+            await persist_mod.load_persistent_data(hass3)
+            sp3 = hass3.data[const_mod.DOMAIN].get(const_mod.DEVICE_SETPOINTS, {})
+            if sp3 == {}:
+                tr.ok("旧版文件无 device_setpoints 字段时初始化为空表")
+            else:
+                tr.fail("旧版兼容", f"期望空表，实际: {sp3}")
+        finally:
+            persist_mod.PERSISTENT_DATA_FILE = "window_controller_gateway_data.json"
+
+
 # ============================================================
 # 主函数
 # ============================================================
@@ -2099,6 +2548,15 @@ async def run_all_tests():
     await test_utils_resolve_ha_device_id(tr)
     await test_quick_add_device_numbering(tr)
     await test_quick_add_device_numbering_second(tr)
+
+    print("\n--- v1.4.2 速度平台测试 ---")
+    await test_set_speed_command(tr)
+    await test_005_winact_speed_parsing(tr)
+    await test_number_module_loads(tr)
+    await test_set_strength_command(tr)
+    await test_005_winact_strength_parsing(tr)
+    await test_number_all_sn_prefixes(tr)
+    await test_persist_setpoints_roundtrip(tr)
 
     print("\n--- 持久化测试 ---")
     test_persist_save_load(tr)

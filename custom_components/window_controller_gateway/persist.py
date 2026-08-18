@@ -9,6 +9,7 @@ from .const import (
     DOMAIN,
     DEVICE_TO_GATEWAY_MAPPING,
     GLOBAL_MANUALLY_REMOVED_DEVICES,
+    DEVICE_SETPOINTS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,6 +52,12 @@ async def load_persistent_data(hass: HomeAssistant) -> None:
                 hass.data[DOMAIN][GLOBAL_MANUALLY_REMOVED_DEVICES] = removed_set
                 _LOGGER.info("已加载手动删除设备列表，共 %d 个设备", len(removed_set))
 
+            # 设备参数设定值（速度/力度等），旧版文件无此字段时保持空表
+            hass.data[DOMAIN].setdefault(DEVICE_SETPOINTS, {})
+            if 'device_setpoints' in data and isinstance(data['device_setpoints'], dict):
+                hass.data[DOMAIN][DEVICE_SETPOINTS] = data['device_setpoints']
+                _LOGGER.info("已加载设备参数设定值，共 %d 个设备", len(data['device_setpoints']))
+
     except Exception as e:
         _LOGGER.info("加载持久化数据失败: %s", e)
 
@@ -89,11 +96,13 @@ async def _do_save(hass: HomeAssistant) -> None:
         # 抛 "dictionary changed size during iteration" 或写入不一致数据
         mapping_snapshot = dict(hass.data[DOMAIN].get(DEVICE_TO_GATEWAY_MAPPING, {}))
         removed_snapshot = list(hass.data[DOMAIN].get(GLOBAL_MANUALLY_REMOVED_DEVICES, set()))
+        setpoints_snapshot = dict(hass.data[DOMAIN].get(DEVICE_SETPOINTS, {}))
 
         data = {
             'schema_version': SCHEMA_VERSION,
             'device_to_gateway_mapping': mapping_snapshot,
-            'manually_removed_devices': removed_snapshot
+            'manually_removed_devices': removed_snapshot,
+            'device_setpoints': setpoints_snapshot
         }
 
         def _write_file():

@@ -40,6 +40,10 @@ from .const import (
     COMMAND_VALUE_TOGGLE,
     ATTRIBUTE_W_TRAVEL,
     ATTRIBUTE_WIND_LOCK_MODE,
+    ATTRIBUTE_WINACT_SPEED,
+    ATTRIBUTE_WINACT_STRENGTH,
+    SPEED_MIN,
+    SPEED_MAX,
     COMMAND_VALUE_WIND_LOCK_TILT,
     COMMAND_VALUE_WIND_LOCK_FLAT,
     DEFAULT_COMMAND_ID,
@@ -443,13 +447,13 @@ class WindowControllerMQTTHandler:
             
             # 验证命令类型（仅保留实际有 command_map 映射的命令；
             # bind_gateway/discover/status 协议上由网关主动发起，HA 发了网关不响应，已移除）
-            valid_commands = ["start_pairing", "open", "close", "stop", "a", "set_position", "wind_lock_tilt", "wind_lock_flat"]
+            valid_commands = ["start_pairing", "open", "close", "stop", "a", "set_position", "set_speed", "set_strength", "wind_lock_tilt", "wind_lock_flat"]
             if command not in valid_commands:
                 _LOGGER.error("未知命令类型: %s", command)
                 return False
             
-            # 控制命令集合（开/关/停/内倒/风锁模式/设置位置）
-            control_commands = ["open", "close", "stop", "a", "set_position", "wind_lock_tilt", "wind_lock_flat"]
+            # 控制命令集合（开/关/停/内倒/风锁模式/设置位置/设置速度/设置力度）
+            control_commands = ["open", "close", "stop", "a", "set_position", "set_speed", "set_strength", "wind_lock_tilt", "wind_lock_flat"]
 
             # 设备存在性检查：控制命令跳过——用户要求任何时候都可控制，
             # 设备 SN 由实体提供，设备是否已被网关上报/是否在 device_manager
@@ -496,6 +500,8 @@ class WindowControllerMQTTHandler:
                 "stop": "004",  # 004: HA 主动发起控制
                 "a": "004",  # 004: HA 主动发起控制
                 "set_position": "004",  # 004: HA 主动发起控制
+                "set_speed": "004",  # 004: HA 主动发起控制 - 开窗速度
+                "set_strength": "004",  # 004: HA 主动发起控制 - 开窗力度
                 "wind_lock_tilt": "004",   # 004: HA 主动发起控制 - 内倒模式
                 "wind_lock_flat": "004"    # 004: HA 主动发起控制 - 平开模式
             }
@@ -563,6 +569,26 @@ class WindowControllerMQTTHandler:
                     _LOGGER.warning("位置参数无效，使用默认值0: %s", position)
                     position = 0
                 payload["data"]["value"] = str(position)
+            elif command in ("set_speed", "set_strength"):
+                # 开窗速度/力度控制（rwp_winact_speed / rwp_winact_strength，0-100）
+                payload["data"]["sn"] = device_sn
+                if command == "set_speed":
+                    payload["data"]["attribute"] = ATTRIBUTE_WINACT_SPEED
+                    raw_value = params.get("speed", 0)
+                else:
+                    payload["data"]["attribute"] = ATTRIBUTE_WINACT_STRENGTH
+                    raw_value = params.get("strength", 0)
+                try:
+                    value = int(raw_value)
+                    if value < SPEED_MIN or value > SPEED_MAX:
+                        value = max(SPEED_MIN, min(SPEED_MAX, value))
+                        _LOGGER.warning("%s 参数超出范围(%d-%d)，已裁剪为 %d",
+                                        payload["data"]["attribute"], SPEED_MIN, SPEED_MAX, value)
+                except (ValueError, TypeError):
+                    _LOGGER.warning("%s 参数无效，使用默认值0: %s",
+                                    payload["data"]["attribute"], raw_value)
+                    value = 0
+                payload["data"]["value"] = str(value)
             elif command in ("wind_lock_tilt", "wind_lock_flat"):
                 # 风锁模式控制 - 内倒模式(value=0) / 平开模式(value=1)
                 payload["data"]["sn"] = device_sn
@@ -1339,6 +1365,22 @@ class WindowControllerMQTTHandler:
                         attributes["wind_lock_mode"] = value
                         mode_name = "内倒模式" if str(value) == "0" else "平开模式"
                         _LOGGER.info("设备 %s 风锁模式确认: %s (值=%s)", device_sn, mode_name, value)
+                    elif attribute == "rwp_winact_speed":
+                        # 开窗速度上报：0-100
+                        try:
+                            speed = int(value)
+                            attributes["winact_speed"] = speed
+                            _LOGGER.debug("设备 %s 开窗速度上报: %d", device_sn, speed)
+                        except (ValueError, TypeError) as e:
+                            _LOGGER.error("设备 %s 开窗速度属性格式错误: %s, 值: %s", device_sn, e, value)
+                    elif attribute == "rwp_winact_strength":
+                        # 开窗力度上报：0-100
+                        try:
+                            strength = int(value)
+                            attributes["winact_strength"] = strength
+                            _LOGGER.debug("设备 %s 开窗力度上报: %d", device_sn, strength)
+                        except (ValueError, TypeError) as e:
+                            _LOGGER.error("设备 %s 开窗力度属性格式错误: %s, 值: %s", device_sn, e, value)
             
             # 更新设备状态
             await self.device_manager.update_device_status(device_sn, status, attributes)

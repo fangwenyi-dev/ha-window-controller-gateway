@@ -19,6 +19,7 @@ from .const import (
     MODEL,
     DEVICE_TO_GATEWAY_MAPPING,
     GLOBAL_MANUALLY_REMOVED_DEVICES,
+    DEVICE_SETPOINTS,
     DEVICE_STATUS_UNKNOWN,
     DEVICE_STATUS_CONNECTED,
     DEVICE_STATUS_ERROR,
@@ -121,6 +122,16 @@ class WindowControllerDeviceManager:
             bool: 如果设备被手动删除过返回True，否则返回False
         """
         return device_sn in self._manually_removed_devices
+
+    def get_device_setpoints(self) -> dict:
+        """获取全局设备参数设定值表 {device_sn: {参数: 值}}
+
+        速度/力度等滑动条实体的设定值存储于此，随持久化文件保存，
+        重启后滑动条回显上次设定位置。
+        """
+        if DOMAIN not in self.hass.data:
+            self.hass.data[DOMAIN] = {}
+        return self.hass.data[DOMAIN].setdefault(DEVICE_SETPOINTS, {})
         
     async def _get_device_registry(self):
         """获取设备注册表（带缓存）"""
@@ -653,6 +664,13 @@ class WindowControllerDeviceManager:
                             device_sn, existing_gateway_sn, self.gateway_sn)
                 else:
                     _LOGGER.debug("设备 %s 不在网关映射表中", device_sn)
+
+            # 清理该设备的参数设定值（速度/力度等），避免残留脏数据
+            setpoints = self.get_device_setpoints()
+            if device_sn in setpoints:
+                del setpoints[device_sn]
+                self._trigger_persistent_save()
+                _LOGGER.debug("设备 %s 的设定值已清理", device_sn)
             
             # 从 Home Assistant 设备注册表中删除设备
             try:

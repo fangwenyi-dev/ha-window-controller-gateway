@@ -29,6 +29,7 @@ from .const import (
     SCAN_INTERVAL,
     DEVICE_TO_GATEWAY_MAPPING,
     GLOBAL_MANUALLY_REMOVED_DEVICES,
+    DEVICE_SETPOINTS,
     RESTART_DELAY,
     GATEWAY_PAIRING_TIMEOUT,
     POSITION_MIN,
@@ -39,7 +40,7 @@ from .persist import load_persistent_data, save_persistent_data
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SENSOR, Platform.COVER]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.NUMBER, Platform.SENSOR, Platform.COVER]
 
 # 发现平台名称
 DISCOVERY_PLATFORM = "window_controller_gateway"
@@ -68,6 +69,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
     # 初始化全局设备到网关映射表
     hass.data[DOMAIN].setdefault(DEVICE_TO_GATEWAY_MAPPING, {})
     hass.data[DOMAIN].setdefault(GLOBAL_MANUALLY_REMOVED_DEVICES, set())
+    hass.data[DOMAIN].setdefault(DEVICE_SETPOINTS, {})
     
     # 加载持久化数据
     await load_persistent_data(hass)
